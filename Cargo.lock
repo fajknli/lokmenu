@@ -254,6 +254,7 @@ dependencies = [
  "clap",
  "cosmic-text",
  "libc",
+ "pinyin",
  "wayland-client",
  "wayland-protocols 0.31.2",
  "wayland-protocols-wlr",
@@ -279,6 +280,12 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "pinyin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f2611cd06a1ac239a0cea4521de9eb068a6ca110324ee00631aa68daa74fc0"
 
 [[package]]
 name = "pkg-config"

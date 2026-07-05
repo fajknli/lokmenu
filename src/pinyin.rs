@@ -1,16 +1,48 @@
-// 未来的 v0.2 会在这里用 phf 引入完整的拼音字库
-// 现在仅作逻辑占位演示
+use pinyin::ToPinyin;
 
+// 获取字符串的全拼连写 (例如 "计算机" -> "jisuanji")
+pub fn get_full_pinyin(text: &str) -> String {
+    let mut result = String::new();
+    for c in text.chars() {
+        if let Some(p) = c.to_pinyin() {
+            result.push_str(p.plain());
+        }
+    }
+    result
+}
+
+// 获取字符串的拼音首字母连写 (例如 "计算机" -> "jsj")
+pub fn get_initials(text: &str) -> String {
+    let mut result = String::new();
+    for c in text.chars() {
+        if let Some(p) = c.to_pinyin() {
+            // 从 plain() 里取第一个字符
+            if let Some(first_char) = p.plain().chars().next() {
+                result.push(first_char);
+            }
+        }
+    }
+    result
+}
+
+// 匹配逻辑：先尝试首字母匹配，再尝试全拼匹配
 pub fn match_pinyin(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
-    // 模拟："计算机" 遇到 "jsj"
-    if text.contains("计算机") && query == "jsj" {
-        // 假设命中了第 0, 1, 2 个字符
-        return Some((500, vec![0, 1, 2]));
+    let q = query.to_lowercase();
+
+    // 优先级 1: 首字母匹配
+    let initials = get_initials(text);
+    if !initials.is_empty() {
+        if let Some(res) = crate::matcher::fuzzy_match(&initials, &q) {
+            return Some((res.0 - 10, res.1));
+        }
     }
 
-    // 模拟："jisuanji" 遇到 "jisji"
-    if text.contains("计算机") && query == "jisji" {
-        return Some((400, vec![0, 1, 2]));
+    // 优先级 2: 全拼匹配
+    let full = get_full_pinyin(text);
+    if !full.is_empty() {
+        if let Some(res) = crate::matcher::fuzzy_match(&full, &q) {
+            return Some((res.0 - 20, res.1));
+        }
     }
 
     None

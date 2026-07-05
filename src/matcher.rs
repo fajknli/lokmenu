@@ -8,6 +8,7 @@ pub fn filter(items: &[&str], query: &str) -> Vec<MatchResult> {
     let mut results = Vec::new();
 
     for (idx, item) in items.iter().enumerate() {
+        // 优先级 1: 原文 Fuzzy 匹配 (带高亮)
         if let Some(res) = fuzzy_match(item, query) {
             results.push(MatchResult {
                 original_idx: idx,
@@ -17,12 +18,12 @@ pub fn filter(items: &[&str], query: &str) -> Vec<MatchResult> {
             continue;
         }
 
-        // 修正这里：加上 crate::
+        // 优先级 2: 拼音匹配 (暂不处理高亮位置)
         if let Some(res) = crate::pinyin::match_pinyin(item, query) {
             results.push(MatchResult {
                 original_idx: idx,
                 score: res.0,
-                highlight_indices: res.1,
+                highlight_indices: Vec::new(), // 暂时返回空
             });
         }
     }
@@ -31,7 +32,7 @@ pub fn filter(items: &[&str], query: &str) -> Vec<MatchResult> {
     results
 }
 
-fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
+pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
     let text_chars: Vec<char> = text.chars().collect();
     let query_chars: Vec<char> = query.chars().collect();
 

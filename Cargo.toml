@@ -6,11 +6,11 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.31", features = ["client"] }
+# 增加 unstable 特性
+wayland-protocols = { version = "0.31", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 libc = "0.2"
 cosmic-text = "0.11"
-# 引入纯 Rust 拼音库
 pinyin = "0.10"
 
 [profile.release]

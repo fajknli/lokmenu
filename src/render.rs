@@ -4,6 +4,13 @@ use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCach
 use crate::config::Config;
 use crate::state::State;
 
+// 辅助结构体：记录每一行的渲染信息
+struct LineInfo {
+    text: String,
+    is_selected: bool,
+    highlights: Vec<usize>, // 相对于该行 text 的字符索引
+}
+
 pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
@@ -39,28 +46,71 @@ impl Renderer {
         let (pbg_r, pbg_g, pbg_b) = extract_rgb(config.prompt_bg);
         let (pfg_r, pfg_g, pfg_b) = extract_rgb(config.prompt_fg);
 
-        // 1. 高效填充全局背景
+        // 1. 填充全局背景
         let bg_pixel = [bg_b, bg_g, bg_r, 0xFF];
         for chunk in pixels.chunks_exact_mut(4) {
             chunk.copy_from_slice(&bg_pixel);
         }
 
-        // 2. 构造文本
-        let mut full_text = String::new();
-        full_text.push_str(&format!("{}{}{}\n", config.prompt, state.query, state.preedit));
-        for (i, &idx) in state.filtered_items.iter().take(config.lines as usize).enumerate() {
-            if i == state.selected_idx {
-                full_text.push_str(&format!("> {}\n", state.items[idx]));
-            } else {
-                full_text.push_str(&format!("  {}\n", state.items[idx]));
+        // 2. 构造每一行的文本及属性
+        let mut lines: Vec<LineInfo> = Vec::new();
+
+        // 第一行：Prompt
+        lines.push(LineInfo {
+            text: format!("{}{}{}", config.prompt, state.query, state.preedit),
+            is_selected: false,
+            highlights: Vec::new(),
+        });
+
+        // 列表行：支持滚动与空结果提示
+        if state.filtered_items.is_empty() {
+            lines.push(LineInfo {
+                text: "  No matches found".to_string(),
+                is_selected: false,
+                highlights: Vec::new(),
+            });
+        } else {
+            let max_chars = 80; // 截断阈值
+            let visible_end = state.scroll_offset + config.lines as usize;
+
+            for i in state.scroll_offset..visible_end.min(state.filtered_items.len()) {
+                let orig_idx = state.filtered_items[i];
+                let item_str = &state.items[orig_idx];
+
+                // 文字过长截断
+                let display_item: String = if item_str.chars().count() > max_chars {
+                    let mut s: String = item_str.chars().take(max_chars).collect();
+                    s.push_str("...");
+                    s
+                } else {
+                    item_str.clone()
+                };
+
+                let is_selected = i == state.selected_idx;
+                let prefix = if is_selected { "> " } else { "  " };
+                let prefix_chars = prefix.chars().count();
+
+                // 转换高亮索引：加上前缀的字符数偏移
+                let highlights: Vec<usize> = state.highlights[i].iter()
+                    .map(|&h| h + prefix_chars)
+                    .filter(|&h| h < display_item.chars().count() + prefix_chars)
+                    .collect();
+
+                lines.push(LineInfo {
+                    text: format!("{}{}", prefix, display_item),
+                    is_selected,
+                    highlights,
+                });
             }
         }
 
-        // 3. 统一排版
+        // 拼接全文本
+        let full_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+
+        // 3. cosmic-text 统一排版
         self.buffer.set_metrics(&mut self.font_system, metrics);
         self.buffer.set_size(&mut self.font_system, width as f32, height as f32);
 
-        // 显式指定 Noto Sans CJK SC，如果系统找不到会自动回退到 SansSerif
         let attrs = Attrs::new()
             .family(Family::Name("Noto Sans CJK SC"))
             .family(Family::SansSerif);
@@ -69,39 +119,47 @@ impl Renderer {
         self.buffer.shape_until_scroll(&mut self.font_system, false);
 
         let runs: Vec<_> = self.buffer.layout_runs().collect();
-        let num_runs = runs.len();
 
-        // 4. 画背景色 (完全绑定 cosmic_text 的真实行坐标)
+        // 4. 画背景色
         for (i, run) in runs.iter().enumerate() {
+            if i >= lines.len() { break; }
             let y_top = run.line_top.floor() as i32;
-            // 修复：背景高度严格使用固定行高，绝不延伸到画布底部
             let rect_h = line_h as i32;
 
             if i == 0 {
                 fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, pbg_r, pbg_g, pbg_b);
-            } else if i - 1 == state.selected_idx {
+            } else if lines[i].is_selected {
                 fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, sbg_r, sbg_g, sbg_b);
             }
         }
 
-        // 5. 画文字
+        // 5. 画文字 (包含高亮逻辑)
         for (i, run) in runs.iter().enumerate() {
-            let (r, g, b) = if i == 0 {
-                (pfg_r, pfg_g, pfg_b)
-            } else if i - 1 == state.selected_idx {
-                (sfg_r, sfg_g, sfg_b)
-            } else {
-                (fg_r, fg_g, fg_b)
-            };
+            if i >= lines.len() { break; }
+            let line_info = &lines[i];
 
             for glyph in run.glyphs.iter() {
                 let physical = glyph.physical((0.0, run.line_y), 1.0);
                 if let Some(image) = self.swash_cache.get_image(&mut self.font_system, physical.cache_key) {
                     let placement = image.placement;
 
-                    // 致命修复：必须应用 placement 偏移，将原点坐标转换为位图左上角坐标
                     let px = physical.x + placement.left;
-                    let py = physical.y - placement.top; // Y 轴是向上的，所以是减
+                    let py = physical.y - placement.top;
+
+                    // 计算当前字形在行文本中的字符索引
+                    let char_idx = line_info.text[..glyph.start].chars().count();
+                    let is_highlight = line_info.highlights.contains(&char_idx);
+
+                    // 确定当前字形的颜色
+                    let (r, g, b) = if line_info.is_selected {
+                        (sfg_r, sfg_g, sfg_b) // 选中行：使用选中前景色
+                    } else if i == 0 {
+                        (pfg_r, pfg_g, pfg_b) // 输入行：使用输入前景色
+                    } else if is_highlight {
+                        (sfg_r, sfg_g, sfg_b) // 普通行高亮：使用选中前景色(通常更亮)以示强调
+                    } else {
+                        (fg_r, fg_g, fg_b)    // 普通文字
+                    };
 
                     for yy in 0..placement.height as i32 {
                         for xx in 0..placement.width as i32 {

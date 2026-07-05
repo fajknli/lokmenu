@@ -8,7 +8,10 @@ pub struct State {
     pub query: String,
     pub preedit: String,
     pub filtered_items: Vec<usize>,
+    pub highlights: Vec<Vec<usize>>, // 新增：保存每个项的高亮字符索引
     pub selected_idx: usize,
+    pub scroll_offset: usize,         // 新增：当前滚动偏移
+    pub visible_lines: u32,           // 新增：可视行数
     pub output: Option<String>,
     pub selected_original_idx: Option<usize>,
     pub exit_code: Option<i32>,
@@ -16,13 +19,16 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(items: Vec<String>, _config: &Config) -> Self {
+    pub fn new(items: Vec<String>, config: &Config) -> Self {
         let mut state = Self {
             items,
             query: String::new(),
             preedit: String::new(),
             filtered_items: Vec::new(),
+            highlights: Vec::new(),
             selected_idx: 0,
+            scroll_offset: 0,
+            visible_lines: config.lines,
             output: None,
             selected_original_idx: None,
             exit_code: None,
@@ -35,10 +41,15 @@ impl State {
     pub fn update_filter(&mut self) {
         let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
         let results = matcher::filter(&items, &self.query);
+
         self.filtered_items = results.iter().map(|r| r.original_idx).collect();
+        self.highlights = results.iter().map(|r| r.highlight_indices.clone()).collect();
+
         if self.selected_idx >= self.filtered_items.len() {
             self.selected_idx = 0;
         }
+        // 过滤后检查是否需要调整滚动
+        self.adjust_scroll();
         self.need_redraw = true;
     }
 
@@ -72,6 +83,7 @@ impl State {
     pub fn move_up(&mut self) {
         if self.selected_idx > 0 {
             self.selected_idx -= 1;
+            self.adjust_scroll();
             self.need_redraw = true;
         }
     }
@@ -79,7 +91,22 @@ impl State {
     pub fn move_down(&mut self) {
         if self.selected_idx + 1 < self.filtered_items.len() {
             self.selected_idx += 1;
+            self.adjust_scroll();
             self.need_redraw = true;
+        }
+    }
+
+    // 新增：自动调整滚动偏移逻辑
+    fn adjust_scroll(&mut self) {
+        let visible = self.visible_lines as usize;
+        if self.filtered_items.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+        if self.selected_idx < self.scroll_offset {
+            self.scroll_offset = self.selected_idx;
+        } else if self.selected_idx >= self.scroll_offset + visible {
+            self.scroll_offset = self.selected_idx - visible + 1;
         }
     }
 

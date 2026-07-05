@@ -5,6 +5,19 @@ pub struct MatchResult {
 }
 
 pub fn filter(items: &[&str], query: &str) -> Vec<MatchResult> {
+    // 1. 空查询：直接按原始顺序返回
+    if query.is_empty() {
+        return items
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| MatchResult {
+                original_idx: idx,
+                score: 0,
+                highlight_indices: Vec::new(),
+            })
+            .collect();
+    }
+
     let mut results = Vec::new();
 
     for (idx, item) in items.iter().enumerate() {
@@ -23,7 +36,7 @@ pub fn filter(items: &[&str], query: &str) -> Vec<MatchResult> {
             results.push(MatchResult {
                 original_idx: idx,
                 score: res.0,
-                highlight_indices: Vec::new(), // 暂时返回空
+                highlight_indices: Vec::new(),
             });
         }
     }
@@ -43,8 +56,13 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
 
     while text_idx < text_chars.len() && query_idx < query_chars.len() {
         if text_chars[text_idx].eq_ignore_ascii_case(&query_chars[query_idx]) {
+            // 优化：连续匹配奖励，分数更高
+            if !highlights.is_empty() && highlights.last() == Some(&(text_idx - 1)) {
+                score += 20;
+            } else {
+                score += 10;
+            }
             highlights.push(text_idx);
-            score += 10;
             query_idx += 1;
         }
         text_idx += 1;

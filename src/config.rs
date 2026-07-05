@@ -7,12 +7,13 @@ pub struct Config {
     pub lines: u32,
     pub width: u32,
     pub font_size: f32,
+    pub font: String, // 新增：字体名称
     pub bg: u32,
     pub fg: u32,
     pub sbg: u32,
     pub sfg: u32,
     pub prompt_bg: u32,
-    pub prompt_fg: u32, // 新增
+    pub prompt_fg: u32,
 }
 
 impl Default for Config {
@@ -23,12 +24,13 @@ impl Default for Config {
             lines: 8,
             width: 800,
             font_size: 18.0,
+            font: "Noto Sans CJK SC".to_string(), // 默认字体
             bg: 0xFF111111,
             fg: 0xFFCCCCCC,
             sbg: 0xFF333333,
             sfg: 0xFFFFFFFF,
             prompt_bg: 0xFF1E90FF,
-            prompt_fg: 0xFFFFFFFF, // 默认白
+            prompt_fg: 0xFFFFFFFF,
         }
     }
 }

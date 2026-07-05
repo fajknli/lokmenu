@@ -70,7 +70,8 @@ impl Renderer {
                 highlights: Vec::new(),
             });
         } else {
-            let max_chars = 80; // 截断阈值
+            // 动态计算最大字符数：基于窗口宽度与字体大小估算
+            let max_chars = ((width as f32 / (font_size * 0.65)) as usize).max(10);
             let visible_end = state.scroll_offset + config.lines as usize;
 
             for i in state.scroll_offset..visible_end.min(state.filtered_items.len()) {
@@ -109,10 +110,13 @@ impl Renderer {
 
         // 3. cosmic-text 统一排版
         self.buffer.set_metrics(&mut self.font_system, metrics);
-        self.buffer.set_size(&mut self.font_system, width as f32, height as f32);
 
+        // 关键修复：设置极大的布局宽度以禁止折行 (Wrap::None 效果)
+        self.buffer.set_size(&mut self.font_system, f32::MAX, height as f32);
+
+        // 修改：使用 Config 中配置的字体，并设置后备字体
         let attrs = Attrs::new()
-            .family(Family::Name("Noto Sans CJK SC"))
+            .family(Family::Name(&config.font))
             .family(Family::SansSerif);
 
         self.buffer.set_text(&mut self.font_system, &full_text, attrs, Shaping::Advanced);

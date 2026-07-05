@@ -1,3 +1,5 @@
+// src/main.rs
+
 use clap::Parser;
 use std::io::{self, Read};
 
@@ -34,6 +36,10 @@ struct Cli {
     #[arg(short, long, default_value_t = 18.0)]
     font_size: f32,
 
+    /// 字体名称
+    #[arg(short = 'f', long, default_value = "Noto Sans CJK SC")]
+    font: String,
+
     /// 背景颜色 (#RRGGBB 或 #RRGGBBAA)
     #[arg(long, default_value = "#111111")]
     bg: String,
@@ -59,7 +65,6 @@ struct Cli {
     prompt_fg: String,
 }
 
-// 将 #RRGGBB 或 #RRGGBBAA 转换为 u32 (ARGB)
 fn parse_color(s: &str) -> u32 {
     let hex = s.trim_start_matches('#');
     let (r, g, b, a) = if hex.len() == 6 {
@@ -77,7 +82,7 @@ fn parse_color(s: &str) -> u32 {
             u8::from_str_radix(&hex[6..8], 16).unwrap_or(0xFF),
         )
     } else {
-        (0x11, 0x11, 0x11, 0xFF) // 默认深灰
+        (0x11, 0x11, 0x11, 0xFF)
     };
     ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
 }
@@ -91,6 +96,7 @@ fn main() {
         lines: cli.lines,
         width: cli.width,
         font_size: cli.font_size,
+        font: cli.font, // 传递字体名称
         bg: parse_color(&cli.bg),
         fg: parse_color(&cli.fg),
         sbg: parse_color(&cli.sbg),

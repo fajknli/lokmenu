@@ -15,7 +15,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_keyboard::{self, WlKeyboard},
-    wl_registry::WlRegistry, wl_seat::WlSeat, wl_shm::WlShm, wl_surface::WlSurface,
+    wl_pointer::{self, WlPointer}, wl_registry::WlRegistry, wl_seat::WlSeat, wl_shm::WlShm, wl_surface::WlSurface,
 };
 
 use wayland_protocols::wp::text_input::zv3::client::{
@@ -83,6 +83,8 @@ pub struct App {
     pub viewporter: Option<WpViewporter>,                             // 新增
     pub viewport: Option<WpViewport>,                                 // 新增
     pub fractional_scale_obj: Option<WpFractionalScaleV1>,            // 新增
+    pub pointer_y: f64,        // 新增：记录鼠标逻辑 Y 坐标
+    pub axis_accumulator: f64, // 新增：滚轮累加值
 }
 
 pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, String)>> {
@@ -138,6 +140,8 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
         viewporter,
         viewport: None,
         fractional_scale_obj: None,
+        pointer_y: 0.0,        // 新增
+        axis_accumulator: 0.0, // 新增
     };
 
     let surface = app.compositor.create_surface(&qh, ());
@@ -190,6 +194,7 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     }
 
     let _keyboard = seat.get_keyboard(&qh, ());
+    let _pointer = seat.get_pointer(&qh, ()); // 新增：获取鼠标指针
 
     loop {
         if let Some(code) = app.state.exit_code {
@@ -498,6 +503,98 @@ impl Dispatch<WlKeyboard, ()> for App {
                         if !c.is_control() {
                             state.state.push_char(c);
                         }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlPointer, ()> for App {
+    fn event(state: &mut Self, _proxy: &WlPointer, event: <WlPointer as wayland_client::Proxy>::Event, _data: &(), _conn: &Connection, _qh: &QueueHandle<Self>) {
+        use wl_pointer::Event;
+        match event {
+            Event::Enter { surface_y, .. } | Event::Motion { surface_y, .. } => {
+                state.pointer_y = surface_y; // 记录最新的鼠标 Y 坐标
+            }
+            Event::Button { button, state: btn_state, .. } => {
+                if btn_state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) {
+                    if button == 0x110 { // 0x110 = BTN_LEFT (左键)
+                        let scale = state.fractional_scale as f32 / 120.0;
+                        let phys_font_size = state.config.font_size * scale;
+                        let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
+                        let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as f32;
+
+                        if phys_line_h > 0.0 {
+                            // 因为使用了 viewport，鼠标传入的是逻辑坐标，我们要除以逻辑行高
+                            let logical_line_h = phys_line_h / scale;
+                            let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
+
+                            if clicked_row >= 1 { // 0 是输入框，>=1 是列表项
+                                let target_idx = state.state.scroll_offset + clicked_row - 1;
+                                if target_idx < state.state.filtered_items.len() {
+                                    state.state.selected_idx = target_idx;
+                                    state.state.select_current(state.config.multi_select);
+                                }
+                            }
+                        }
+                    } else if button == 0x111 { // 0x111 = BTN_RIGHT (右键)
+                        // 右键多选逻辑 (仅在 -m 模式下生效)
+                        if state.config.multi_select {
+                            let scale = state.fractional_scale as f32 / 120.0;
+                            let phys_font_size = state.config.font_size * scale;
+                            let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
+                            let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as f32;
+
+                            if phys_line_h > 0.0 {
+                                let logical_line_h = phys_line_h / scale;
+                                let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
+
+                                if clicked_row >= 1 {
+                                    let target_idx = state.state.scroll_offset + clicked_row - 1;
+                                    if target_idx < state.state.filtered_items.len() {
+                                        state.state.selected_idx = target_idx;
+                                        state.state.toggle_mark();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Event::AxisValue120 { axis, value120, .. } => {
+                if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
+                    // value120 通常为 120 或 -120
+                    let steps = (value120 / 120).abs() as usize;
+                    let lines_per_step = 3; // 每格滚动 3 行
+
+                    if value120 > 0 {
+                        for _ in 0..(steps * lines_per_step) {
+                            state.state.move_down();
+                        }
+                    } else if value120 < 0 {
+                        for _ in 0..(steps * lines_per_step) {
+                            state.state.move_up();
+                        }
+                    }
+                }
+            }
+            // 保留旧的 Axis 事件作为兼容（某些老设备/触控板可能不发 120 信号）
+            Event::Axis { axis, value, .. } => {
+                if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
+                    state.axis_accumulator += value;
+                    let threshold = 15.0;
+                    if state.axis_accumulator > threshold {
+                        state.state.move_down();
+                        state.state.move_down();
+                        state.state.move_down(); // 同样改为 3 行
+                        state.axis_accumulator = 0.0;
+                    } else if state.axis_accumulator < -threshold {
+                        state.state.move_up();
+                        state.state.move_up();
+                        state.state.move_up(); // 3 行
+                        state.axis_accumulator = 0.0;
                     }
                 }
             }

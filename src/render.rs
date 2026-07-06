@@ -109,16 +109,27 @@ impl Renderer {
         }
 
         let mut lines: Vec<LineInfo> = Vec::new();
+        // 在末尾加上光标指示符
+        let cursor = "│";
         lines.push(LineInfo {
             text: format!("{}{}{}", config.prompt, state.query, state.preedit),
+            // 如果有预编辑(中文输入中)不显示光标，否则显示
             is_selected: false,
             is_marked: false,
             highlights: Vec::new(),
         });
 
+        // 如果没有在输入中文预编辑，在第一行文本末尾追加光标
+        if state.preedit.is_empty() {
+            if let Some(first_line) = lines.get_mut(0) {
+                first_line.text.push_str(cursor);
+            }
+        }
+
         if state.filtered_items.is_empty() {
+            // 没有匹配项时，直接显示输入框内容
             lines.push(LineInfo {
-                text: format!("Echo: {}", state.query),
+                text: state.query.clone(),
                 is_selected: true,
                 is_marked: false,
                 highlights: Vec::new(),
@@ -164,17 +175,21 @@ impl Renderer {
             self.buffer.set_wrap(&mut self.font_system, Wrap::None);
             self.buffer.set_size(&mut self.font_system, width as f32, height as f32);
 
-            let attrs = Attrs::new()
-                .family(Family::Name(&config.font))
-                .family(Family::SansSerif);
+            // 基础属性：始终包含通用无衬线字体作为保底
+            let mut attrs = Attrs::new().family(Family::SansSerif);
 
-            if !self.font_checked {
-                let db = self.font_system.db();
-                let found = db.faces().any(|f| f.families.iter().any(|(name, _)| name == &config.font));
-                if !found {
-                    eprintln!("Warning: Font '{}' not found, falling back to SansSerif.", config.font);
+            // 如果用户指定了具体字体名称，则添加到最前面优先匹配
+            if !config.font.is_empty() {
+                if !self.font_checked {
+                    let db = self.font_system.db();
+                    let found = db.faces().any(|f| f.families.iter().any(|(name, _)| name == &config.font));
+                    if !found {
+                        eprintln!("Warning: Font '{}' not found, falling back to system default.", config.font);
+                    }
+                    self.font_checked = true;
                 }
-                self.font_checked = true;
+                // 将用户指定的字体插入到最高优先级
+                attrs = attrs.family(Family::Name(&config.font));
             }
 
             self.buffer.set_text(&mut self.font_system, &full_text, attrs, Shaping::Advanced);

@@ -30,6 +30,10 @@ struct Cli {
     #[arg(short = 'm', long)]
     multi_select: bool,
 
+    /// 多选时输出用 NUL (\0) 分隔，方便配合 xargs -0 使用
+    #[arg(short = '0', long)]
+    null: bool,
+
     /// 窗口宽度 (0 表示铺满屏幕宽度)
     #[arg(short = 'W', long, default_value_t = 0)]
     width: u32,
@@ -38,8 +42,8 @@ struct Cli {
     #[arg(short, long, default_value_t = 14.0)]
     font_size: f32,
 
-    /// 字体名称
-    #[arg(short = 'f', long, default_value = "Noto Sans")]
+    /// 字体名称 (留空则使用系统默认字体)
+    #[arg(short = 'f', long, default_value = "")]
     font: String,
 
     /// 背景颜色
@@ -94,6 +98,12 @@ fn parse_color(s: &str) -> u32 {
 }
 
 fn main() {
+    // 恢复 Unix 默认的 SIGPIPE 行为，防止管道破裂时 panic
+    #[cfg(target_family = "unix")]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let cli = Cli::parse();
 
     let mut input = String::new();
@@ -128,6 +138,7 @@ fn main() {
         prompt_bg: parse_color(&cli.prompt_bg),
         prompt_fg: parse_color(&cli.prompt_fg),
         multi_select: cli.multi_select,
+        null: cli.null,
     };
 
     match wayland::run(items, config) {

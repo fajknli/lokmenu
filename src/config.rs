@@ -14,6 +14,7 @@ pub struct Config {
     pub prompt_bg: u32,
     pub prompt_fg: u32,
     pub multi_select: bool,
+    pub null: bool,
 }
 
 impl Default for Config {
@@ -24,7 +25,7 @@ impl Default for Config {
             lines: 8,
             width: 800,
             font_size: 14.0,
-            font: "Noto Sans".to_string(),
+            font: String::new(),
             bg: 0xFF141522,       // 极暗冷黑
             fg: 0xFFA9B5D5,       // 基准冷白
             sbg: 0xFF565D7E,      // 深冷灰 (提亮选中背景)
@@ -33,6 +34,7 @@ impl Default for Config {
             prompt_bg: 0xFF1B1D2B,// 微冷黑 (压暗输入框背景)
             prompt_fg: 0xFFA9B5D5,// 基准冷白
             multi_select: false,
+            null: false,
         }
     }
 }

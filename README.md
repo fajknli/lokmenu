@@ -1,4 +1,4 @@
-# lok
+# lokmenu
 
 wayland 菜单(配合脚本交互使用)
 

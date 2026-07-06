@@ -1,5 +1,5 @@
 [package]
-name = "lok"
+name = "lokmenu"
 version = "0.1.0"
 edition = "2021"
 description = "A CJK-optimized Wayland menu tool"

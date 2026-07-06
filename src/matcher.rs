@@ -39,7 +39,7 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
             results.push(MatchResult {
                 original_idx: idx,
                 score: res.0,
-                highlight_indices: Vec::new(),
+                highlight_indices: res.1,
             });
         }
     }

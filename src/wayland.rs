@@ -78,23 +78,18 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     })?;
     let qh = queue.handle();
 
-    // 修复兼容性：移除 unwrap，给出友好的错误提示
     let compositor: WlCompositor = globals.bind(&qh, 1..=4, ()).map_err(|_| {
         io::Error::new(io::ErrorKind::NotFound, "Compositor (wl_compositor) not supported")
     })?;
-
     let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).map_err(|_| {
-        io::Error::new(io::ErrorKind::NotFound, "wlr-layer-shell protocol not supported. Is your compositor supporting it?")
+        io::Error::new(io::ErrorKind::NotFound, "wlr-layer-shell protocol not supported")
     })?;
-
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).map_err(|_| {
         io::Error::new(io::ErrorKind::NotFound, "wl_shm not supported")
     })?;
-
     let seat: WlSeat = globals.bind(&qh, 1..=4, ()).map_err(|_| {
         io::Error::new(io::ErrorKind::NotFound, "wl_seat not supported")
     })?;
-
     let text_input_manager: ZwpTextInputManagerV3 = globals.bind(&qh, 1..=1, ()).map_err(|_| {
         io::Error::new(io::ErrorKind::NotFound, "text-input-v3 protocol not supported")
     })?;
@@ -124,14 +119,21 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     app.text_input = Some(text_input);
 
     let layer_surface = app.layer_shell.get_layer_surface(
-        &surface, None, Layer::Top, "lok".to_string(), &qh, (), // 修复：Overlay 改为 Top 更通用
+        &surface, None, Layer::Overlay, "lok".to_string(), &qh, (),
     );
 
-    layer_surface.set_anchor(Anchor::Top | Anchor::Left);
-    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
     let line_h = (app.config.font_size * 1.5).ceil() as u32;
-    layer_surface.set_size(app.config.width, (app.config.lines + 1) * line_h);
+    let height = (app.config.lines + 1) * line_h;
 
+    if app.config.width == 0 {
+        layer_surface.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer_surface.set_size(0, height);
+    } else {
+        layer_surface.set_anchor(Anchor::Top | Anchor::Left);
+        layer_surface.set_size(app.config.width, height);
+    }
+
+    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
     surface.commit();
 
     while !app.configured {
@@ -146,10 +148,9 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     loop {
         if let Some(code) = app.state.exit_code {
             if code == 0 {
-                if let Some(idx) = app.state.selected_original_idx {
-                    let text = app.state.output.clone().unwrap_or_default();
-                    return Ok(Some((idx, text)));
-                }
+                let text = app.state.output.clone().unwrap_or_default();
+                let idx = app.state.selected_original_idx.unwrap_or(usize::MAX);
+                return Ok(Some((idx, text)));
             }
             return Ok(None);
         }
@@ -309,7 +310,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                 let line_h = (state.config.font_size * 1.5).ceil() as u32;
                 let h_u32 = if height == 0 { (state.config.lines + 1) * line_h } else { height };
 
-                state.width = w_u32 as i32;
+                state.width = if w_u32 == 0 { 800 } else { w_u32 as i32 };
                 state.height = h_u32 as i32;
 
                 for i in 0..2 {
@@ -319,7 +320,19 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                     }
                 }
 
-                state.state.need_redraw = true;
+                if let Some(slot) = state.buffers[0].as_mut() {
+                    let pixels = unsafe { std::slice::from_raw_parts_mut(slot.shm.ptr, slot.shm.size) };
+                    state.renderer.draw_frame(pixels, state.width, state.height, &state.state, &state.config);
+                    slot.busy = true;
+
+                    if let Some(surface) = &state.surface {
+                        surface.attach(Some(&slot.buffer), 0, 0);
+                        surface.damage(0, 0, state.width, state.height);
+                        surface.commit();
+                    }
+                }
+
+                state.state.need_redraw = false;
             }
             Event::Closed => { state.state.cancel(); }
             _ => {}
@@ -355,10 +368,11 @@ impl Dispatch<WlKeyboard, ()> for App {
                 if key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     if state.ctrl_pressed {
                         match key {
+                            46 => { state.state.cancel(); return; }     // Ctrl + C
                             22 => { state.state.clear_query(); return; } // Ctrl + U
                             17 => { state.state.delete_word(); return; } // Ctrl + W
                             25 => { state.state.move_up(); return; }     // Ctrl + P
-                            36 => { state.state.move_down(); return; }   // Ctrl + N
+                            49 => { state.state.move_down(); return; }   // Ctrl + N
                             _ => {}
                         }
                         return;

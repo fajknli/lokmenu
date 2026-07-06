@@ -47,3 +47,18 @@ pub fn match_pinyin(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
 
     None
 }
+
+// 新增：单次遍历获取全拼和首字母
+pub fn get_pinyin_pair(text: &str) -> (String, String) {
+    let mut full = String::new();
+    let mut initials = String::new();
+    for c in text.chars() {
+        if let Some(p) = c.to_pinyin() {
+            full.push_str(p.plain());
+            if let Some(first) = p.plain().chars().next() {
+                initials.push(first);
+            }
+        }
+    }
+    (full, initials)
+}

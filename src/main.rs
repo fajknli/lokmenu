@@ -1,5 +1,3 @@
-// src/main.rs
-
 use clap::Parser;
 use std::io::{self, Read};
 
@@ -24,12 +22,12 @@ struct Cli {
     #[arg(short, long)]
     output_index: bool,
 
-    /// 垂直显示的行数
-    #[arg(short = 'n', long, default_value_t = 8)]
+    /// 垂直显示的行数 (0 表示按条目数自适应，最大20)
+    #[arg(short = 'n', long, default_value_t = 0)]
     lines: u32,
 
-    /// 窗口宽度 (像素)
-    #[arg(short = 'W', long, default_value_t = 800)]
+    /// 窗口宽度 (0 表示铺满屏幕宽度)
+    #[arg(short = 'W', long, default_value_t = 0)]
     width: u32,
 
     /// 字体大小
@@ -37,31 +35,35 @@ struct Cli {
     font_size: f32,
 
     /// 字体名称
-    #[arg(short = 'f', long, default_value = "Noto Sans CJK SC")]
+    #[arg(short = 'f', long, default_value = "Noto Sans")]
     font: String,
 
-    /// 背景颜色 (#RRGGBB 或 #RRGGBBAA)
-    #[arg(long, default_value = "#111111")]
+    /// 背景颜色
+    #[arg(long, default_value = "#141522")]
     bg: String,
 
     /// 普通文字颜色
-    #[arg(long, default_value = "#CCCCCC")]
+    #[arg(long, default_value = "#A9B5D5")]
     fg: String,
 
     /// 选中项背景颜色
-    #[arg(long, default_value = "#333333")]
+    #[arg(long, default_value = "#565D7E")]
     sbg: String,
 
     /// 选中项文字颜色
-    #[arg(long, default_value = "#FFFFFF")]
+    #[arg(long, default_value = "#D4DCF2")]
     sfg: String,
 
+    /// 匹配字符高亮颜色
+    #[arg(long, default_value = "#C93B3B")]
+    hfg: String,
+
     /// 输入框背景颜色
-    #[arg(long, default_value = "#1E90FF")]
+    #[arg(long, default_value = "#1B1D2B")]
     prompt_bg: String,
 
     /// 输入框文字颜色
-    #[arg(long, default_value = "#FFFFFF")]
+    #[arg(long, default_value = "#A9B5D5")]
     prompt_fg: String,
 }
 
@@ -90,32 +92,42 @@ fn parse_color(s: &str) -> u32 {
 fn main() {
     let cli = Cli::parse();
 
-    let config = Config {
-        prompt: cli.prompt,
-        output_index: cli.output_index,
-        lines: cli.lines,
-        width: cli.width,
-        font_size: cli.font_size,
-        font: cli.font, // 传递字体名称
-        bg: parse_color(&cli.bg),
-        fg: parse_color(&cli.fg),
-        sbg: parse_color(&cli.sbg),
-        sfg: parse_color(&cli.sfg),
-        prompt_bg: parse_color(&cli.prompt_bg),
-        prompt_fg: parse_color(&cli.prompt_fg),
-    };
-
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
-    let items: Vec<String> = input.lines().map(|s| s.to_string()).collect();
+
+    // 鲁棒性修复：限制最大读取条目数，防止 OOM
+    const MAX_ITEMS: usize = 100_000;
+    let items: Vec<String> = input.lines().take(MAX_ITEMS).map(|s| s.to_string()).collect();
 
     if items.is_empty() {
         std::process::exit(2);
     }
 
+    let lines = if cli.lines == 0 {
+        items.len().min(20) as u32
+    } else {
+        cli.lines
+    };
+
+    let config = Config {
+        prompt: cli.prompt,
+        output_index: cli.output_index,
+        lines,
+        width: cli.width,
+        font_size: cli.font_size,
+        font: cli.font,
+        bg: parse_color(&cli.bg),
+        fg: parse_color(&cli.fg),
+        sbg: parse_color(&cli.sbg),
+        sfg: parse_color(&cli.sfg),
+        hfg: parse_color(&cli.hfg),
+        prompt_bg: parse_color(&cli.prompt_bg),
+        prompt_fg: parse_color(&cli.prompt_fg),
+    };
+
     match wayland::run(items, config) {
         Ok(Some((idx, text))) => {
-            if cli.output_index {
+            if cli.output_index && idx != usize::MAX {
                 println!("{}", idx);
             } else {
                 println!("{}", text);

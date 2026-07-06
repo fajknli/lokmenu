@@ -5,7 +5,7 @@ use crate::matcher;
 
 pub struct State {
     pub items: Vec<String>,
-    pub cached_pinyin: Vec<(String, String)>, // 新增：(全拼, 首字母) 缓存
+    pub cached_pinyin: Vec<(String, String)>,
     pub query: String,
     pub preedit: String,
     pub filtered_items: Vec<usize>,
@@ -21,9 +21,8 @@ pub struct State {
 
 impl State {
     pub fn new(items: Vec<String>, config: &Config) -> Self {
-        // 预计算拼音缓存
         let cached_pinyin = items.iter().map(|s| {
-            (crate::pinyin::get_full_pinyin(s), crate::pinyin::get_initials(s))
+            crate::pinyin::get_pinyin_pair(s)
         }).collect();
 
         let mut state = Self {
@@ -69,7 +68,6 @@ impl State {
         self.update_filter();
     }
 
-    // 新增：Ctrl+U 清空输入
     pub fn clear_query(&mut self) {
         if !self.query.is_empty() {
             self.query.clear();
@@ -77,16 +75,13 @@ impl State {
         }
     }
 
-    // 新增：Ctrl+W 删除前一个单词
     pub fn delete_word(&mut self) {
         if self.query.is_empty() { return; }
 
         let mut chars: Vec<char> = self.query.chars().collect();
-        // 去除末尾空格
         while matches!(chars.last(), Some(c) if c.is_whitespace()) {
             chars.pop();
         }
-        // 删除直到遇到空格或开头
         while !chars.is_empty() {
             if chars.last().map_or(false, |c| c.is_whitespace()) {
                 break;
@@ -145,8 +140,13 @@ impl State {
 
     pub fn select_current(&mut self) {
         if let Some(&idx) = self.filtered_items.get(self.selected_idx) {
+            // 正常匹配选中
             self.output = Some(self.items[idx].clone());
-            self.selected_original_idx = Some(idx); // 记录原始索引
+            self.selected_original_idx = Some(idx);
+        } else {
+            // 未匹配任何项，输出用户当前输入的内容
+            self.output = Some(self.query.clone());
+            self.selected_original_idx = Some(usize::MAX); // 标记为无原索引
         }
         self.exit_code = Some(0);
     }

@@ -1,20 +1,23 @@
 // src/render.rs
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent, Wrap};
 use crate::config::Config;
 use crate::state::State;
 
-// 辅助结构体：记录每一行的渲染信息
 struct LineInfo {
     text: String,
     is_selected: bool,
-    highlights: Vec<usize>, // 相对于该行 text 的字符索引
+    highlights: Vec<usize>,
 }
 
 pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
     pub buffer: Buffer,
+    font_checked: bool,
+    last_text: String,
+    last_width: i32,
+    last_height: i32,
 }
 
 impl Renderer {
@@ -26,6 +29,10 @@ impl Renderer {
             font_system,
             swash_cache: SwashCache::new(),
             buffer,
+            font_checked: false,
+            last_text: String::new(),
+            last_width: 0,
+            last_height: 0,
         }
     }
 
@@ -35,42 +42,33 @@ impl Renderer {
         let line_h = (font_size * 1.5).ceil();
         let metrics = Metrics::new(font_size, line_h);
 
-        let extract_rgb = |c: u32| -> (u8, u8, u8) {
-            ((c >> 16 & 0xFF) as u8, (c >> 8 & 0xFF) as u8, (c & 0xFF) as u8)
-        };
-
         let (bg_r, bg_g, bg_b) = extract_rgb(config.bg);
         let (fg_r, fg_g, fg_b) = extract_rgb(config.fg);
         let (sbg_r, sbg_g, sbg_b) = extract_rgb(config.sbg);
         let (sfg_r, sfg_g, sfg_b) = extract_rgb(config.sfg);
+        let (hfg_r, hfg_g, hfg_b) = extract_rgb(config.hfg);
         let (pbg_r, pbg_g, pbg_b) = extract_rgb(config.prompt_bg);
         let (pfg_r, pfg_g, pfg_b) = extract_rgb(config.prompt_fg);
 
-        // 1. 填充全局背景
         let bg_pixel = [bg_b, bg_g, bg_r, 0xFF];
         for chunk in pixels.chunks_exact_mut(4) {
             chunk.copy_from_slice(&bg_pixel);
         }
 
-        // 2. 构造每一行的文本及属性
         let mut lines: Vec<LineInfo> = Vec::new();
-
-        // 第一行：Prompt
         lines.push(LineInfo {
             text: format!("{}{}{}", config.prompt, state.query, state.preedit),
             is_selected: false,
             highlights: Vec::new(),
         });
 
-        // 列表行：支持滚动与空结果提示
         if state.filtered_items.is_empty() {
             lines.push(LineInfo {
-                text: "  No matches found".to_string(),
+                text: "No matches found".to_string(),
                 is_selected: false,
                 highlights: Vec::new(),
             });
         } else {
-            // 动态计算最大字符数：基于窗口宽度与字体大小估算
             let max_chars = ((width as f32 / (font_size * 0.65)) as usize).max(10);
             let visible_end = state.scroll_offset + config.lines as usize;
 
@@ -78,7 +76,6 @@ impl Renderer {
                 let orig_idx = state.filtered_items[i];
                 let item_str = &state.items[orig_idx];
 
-                // 文字过长截断
                 let display_item: String = if item_str.chars().count() > max_chars {
                     let mut s: String = item_str.chars().take(max_chars).collect();
                     s.push_str("...");
@@ -88,43 +85,51 @@ impl Renderer {
                 };
 
                 let is_selected = i == state.selected_idx;
-                let prefix = if is_selected { "> " } else { "  " };
-                let prefix_chars = prefix.chars().count();
-
-                // 转换高亮索引：加上前缀的字符数偏移
-                let highlights: Vec<usize> = state.highlights[i].iter()
-                    .map(|&h| h + prefix_chars)
-                    .filter(|&h| h < display_item.chars().count() + prefix_chars)
-                    .collect();
+                let highlights = state.highlights.get(i).cloned().unwrap_or_default();
 
                 lines.push(LineInfo {
-                    text: format!("{}{}", prefix, display_item),
+                    text: display_item,
                     is_selected,
                     highlights,
                 });
             }
         }
 
-        // 拼接全文本
         let full_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
 
-        // 3. cosmic-text 统一排版
-        self.buffer.set_metrics(&mut self.font_system, metrics);
+        // shape 缓存：文本没变且尺寸没变时跳过 shape
+        let needs_shape = full_text != self.last_text
+            || width != self.last_width
+            || height != self.last_height;
 
-        // 关键修复：设置极大的布局宽度以禁止折行 (Wrap::None 效果)
-        self.buffer.set_size(&mut self.font_system, f32::MAX, height as f32);
+        if needs_shape {
+            self.buffer.set_metrics(&mut self.font_system, metrics);
+            self.buffer.set_wrap(&mut self.font_system, Wrap::None);
+            self.buffer.set_size(&mut self.font_system, width as f32, height as f32);
 
-        // 修改：使用 Config 中配置的字体，并设置后备字体
-        let attrs = Attrs::new()
-            .family(Family::Name(&config.font))
-            .family(Family::SansSerif);
+            let attrs = Attrs::new()
+                .family(Family::Name(&config.font))
+                .family(Family::SansSerif);
 
-        self.buffer.set_text(&mut self.font_system, &full_text, attrs, Shaping::Advanced);
-        self.buffer.shape_until_scroll(&mut self.font_system, false);
+            if !self.font_checked {
+                let db = self.font_system.db();
+                let found = db.faces().any(|f| f.families.iter().any(|(name, _)| name == &config.font));
+                if !found {
+                    eprintln!("Warning: Font '{}' not found, falling back to SansSerif.", config.font);
+                }
+                self.font_checked = true;
+            }
+
+            self.buffer.set_text(&mut self.font_system, &full_text, attrs, Shaping::Advanced);
+            self.buffer.shape_until_scroll(&mut self.font_system, false);
+
+            self.last_text = full_text;
+            self.last_width = width;
+            self.last_height = height;
+        }
 
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
-        // 4. 画背景色
         for (i, run) in runs.iter().enumerate() {
             if i >= lines.len() { break; }
             let y_top = run.line_top.floor() as i32;
@@ -134,10 +139,11 @@ impl Renderer {
                 fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, pbg_r, pbg_g, pbg_b);
             } else if lines[i].is_selected {
                 fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, sbg_r, sbg_g, sbg_b);
+                // 选中指示：左侧 3px 竖线
+                fill_rect(pixels, stride, width, height, 0, y_top, 3, rect_h, sfg_r, sfg_g, sfg_b);
             }
         }
 
-        // 5. 画文字 (包含高亮逻辑)
         for (i, run) in runs.iter().enumerate() {
             if i >= lines.len() { break; }
             let line_info = &lines[i];
@@ -146,23 +152,22 @@ impl Renderer {
                 let physical = glyph.physical((0.0, run.line_y), 1.0);
                 if let Some(image) = self.swash_cache.get_image(&mut self.font_system, physical.cache_key) {
                     let placement = image.placement;
-
                     let px = physical.x + placement.left;
                     let py = physical.y - placement.top;
 
-                    // 计算当前字形在行文本中的字符索引
-                    let char_idx = line_info.text[..glyph.start].chars().count();
+                    let char_idx = line_info.text.get(..glyph.start)
+                        .map(|s| s.chars().count())
+                        .unwrap_or(0);
                     let is_highlight = line_info.highlights.contains(&char_idx);
 
-                    // 确定当前字形的颜色
                     let (r, g, b) = if line_info.is_selected {
-                        (sfg_r, sfg_g, sfg_b) // 选中行：使用选中前景色
+                        (sfg_r, sfg_g, sfg_b)
                     } else if i == 0 {
-                        (pfg_r, pfg_g, pfg_b) // 输入行：使用输入前景色
+                        (pfg_r, pfg_g, pfg_b)
                     } else if is_highlight {
-                        (sfg_r, sfg_g, sfg_b) // 普通行高亮：使用选中前景色(通常更亮)以示强调
+                        (hfg_r, hfg_g, hfg_b) // 修改这里：使用冷红高亮
                     } else {
-                        (fg_r, fg_g, fg_b)    // 普通文字
+                        (fg_r, fg_g, fg_b)
                     };
 
                     for yy in 0..placement.height as i32 {
@@ -177,27 +182,30 @@ impl Renderer {
                                     SwashContent::Mask => {
                                         let img_idx = yy as usize * placement.width as usize + xx as usize;
                                         if img_idx < image.data.len() {
-                                            let alpha = image.data[img_idx] as f32 / 255.0;
-                                            if alpha > 0.0 {
-                                                blend_pixel(pixels, buf_idx, r, g, b, alpha);
+                                            let alpha = image.data[img_idx];
+                                            if alpha > 0 {
+                                                blend_pixel_fast(pixels, buf_idx, r, g, b, alpha);
                                             }
                                         }
                                     }
                                     SwashContent::Color => {
                                         let img_idx = (yy as usize * placement.width as usize + xx as usize) * 4;
                                         if img_idx + 3 < image.data.len() {
-                                            let a = image.data[img_idx + 3] as f32 / 255.0;
-                                            if a > 0.0 {
-                                                blend_pixel(pixels, buf_idx, image.data[img_idx], image.data[img_idx + 1], image.data[img_idx + 2], a);
+                                            let a = image.data[img_idx + 3];
+                                            if a > 0 {
+                                                let er = image.data[img_idx];
+                                                let eg = image.data[img_idx + 1];
+                                                let eb = image.data[img_idx + 2];
+                                                blend_pixel_fast(pixels, buf_idx, er, eg, eb, a);
                                             }
                                         }
                                     }
                                     SwashContent::SubpixelMask => {
                                         let img_idx = (yy as usize * placement.width as usize + xx as usize) * 3;
                                         if img_idx + 2 < image.data.len() {
-                                            let a = (image.data[img_idx].max(image.data[img_idx + 1]).max(image.data[img_idx + 2])) as f32 / 255.0;
-                                            if a > 0.0 {
-                                                blend_pixel(pixels, buf_idx, r, g, b, a);
+                                            let a = image.data[img_idx].max(image.data[img_idx + 1]).max(image.data[img_idx + 2]);
+                                            if a > 0 {
+                                                blend_pixel_fast(pixels, buf_idx, r, g, b, a);
                                             }
                                         }
                                     }
@@ -211,14 +219,21 @@ impl Renderer {
     }
 }
 
-fn blend_pixel(pixels: &mut [u8], idx: usize, r: u8, g: u8, b: u8, alpha: f32) {
-    let bg_r = pixels[idx + 2] as f32;
-    let bg_g = pixels[idx + 1] as f32;
-    let bg_b = pixels[idx] as f32;
-    pixels[idx + 2] = (bg_r * (1.0 - alpha) + r as f32 * alpha) as u8;
-    pixels[idx + 1] = (bg_g * (1.0 - alpha) + g as f32 * alpha) as u8;
-    pixels[idx]     = (bg_b * (1.0 - alpha) + b as f32 * alpha) as u8;
-    pixels[idx + 3] = 0xFF;
+fn extract_rgb(c: u32) -> (u8, u8, u8) {
+    ((c >> 16 & 0xFF) as u8, (c >> 8 & 0xFF) as u8, (c & 0xFF) as u8)
+}
+
+fn blend_pixel_fast(pixels: &mut [u8], idx: usize, r: u8, g: u8, b: u8, alpha: u8) {
+    let a = alpha as u32;
+    let inv_alpha = 255 - a;
+    let bg_b = pixels[idx] as u32;
+    let bg_g = pixels[idx + 1] as u32;
+    let bg_r = pixels[idx + 2] as u32;
+
+    pixels[idx]     = ((bg_b * inv_alpha + b as u32 * a) / 255) as u8;
+    pixels[idx + 1] = ((bg_g * inv_alpha + g as u32 * a) / 255) as u8;
+    pixels[idx + 2] = ((bg_r * inv_alpha + r as u32 * a) / 255) as u8;
+    pixels[idx + 3] = 255;
 }
 
 fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8) {

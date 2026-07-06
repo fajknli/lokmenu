@@ -1,104 +1,68 @@
 # lok
 
-A CJK-optimized Wayland menu tool. Supports fuzzy matching, pinyin input, and fractional scaling.
+wayland 菜单(配合脚本交互使用)
 
-## Dependencies
 
-Requires a Wayland compositor with `wlr-layer-shell`, `text-input-v3`, and optionally `fractional-scale` / `viewporter` support.
+需要支持 `wlr-layer-shell`、`text-input-v3` 的 Wayland 合成器，可选支持 `fractional-scale` / `viewporter`。
 
-## Install
-
-```bash
-cargo build --release
-```
-
-## Usage
+## 安装
 
 ```bash
-echo -e "firefox\nchromium\nalacritty\nthunar" | lok -p "Open: "
+
 ```
 
-## Parameters
+## 参数
 
-| Flag | Long | Description | Default |
-|------|------|-------------|---------|
-| `-p` | `--prompt` | Prompt prefix text | (empty) |
-| `-i` | `--output-index` | Output selected index instead of content | off |
-| `-n` | `--lines` | Visible rows (0 = auto, max 20) | 0 |
-| `-W` | `--width` | Window width in pixels (0 = fullscreen) | 0 |
-| `-s` | `--font-size` | Font size | 14.0 |
-| `-f` | `--font` | Font name | (system default) |
-| `-m` | `--multi-select` | Multi-select mode (Tab to mark, Enter to confirm) | off |
-| `-0` | `--null` | NUL-separate multi-select output (for `xargs -0`) | off |
-| `-P` | `--password` | Password mode (hide input, no list) | off |
-| | `--anchor` | Window position: `top` or `bottom` | top |
-| `-b` | `--bg` | Background color | `#141522` |
-| | `--fg` | Normal text color | `#A9B5D5` |
-| | `--sbg` | Selected item background | `#565D7E` |
-| | `--sfg` | Selected item text | `#D4DCF2` |
-| | `--hfg` | Match highlight color | `#C93B3B` |
-| | `--prompt-bg` | Input box background | `#1B1D2B` |
-| | `--prompt-fg` | Input box text color | `#A9B5D5` |
+| 短选项 | 长选项 | 说明 | 默认值 |
+|--------|--------|------|--------|
+| `-p` | `--prompt` | 提示符前缀文本 | （空） |
+| `-i` | `--output-index` | 输出选中项的序号而非内容 | 关闭 |
+| `-n` | `--lines` | 可见行数（0 = 自适应，最大 20） | 0 |
+| `-W` | `--width` | 窗口宽度，像素（0 = 铺满屏幕） | 0 |
+| `-s` | `--font-size` | 字体大小 | 14.0 |
+| `-f` | `--font` | 字体名称 | （系统默认） |
+| `-m` | `--multi-select` | 多选模式（Tab 标记/取消，回车确认） | 关闭 |
+| `-0` | `--null` | 多选结果用 NUL 分隔（配合 `xargs -0`） | 关闭 |
+| `-P` | `--password` | 密码模式（隐藏输入，不显示列表） | 关闭 |
+| | `--anchor` | 窗口位置：`top` `top-left` `top-center` `top-right` `bottom` `bottom-left` `bottom-center` `bottom-right` | top |
+| `-b` | `--bg` | 背景颜色 | `#141522` |
+| | `--fg` | 普通文字颜色 | `#D4DCF2` |
+| | `--sbg` | 选中项背景颜色 | `#242838` |
+| | `--sfg` | 选中项文字颜色 | `#D4DCF2` |
+| | `--hfg` | 匹配字符高亮颜色 | `#C93B3B` |
+| | `--prompt-bg` | 输入框背景颜色 | `#1B1D2B` |
+| | `--prompt-fg` | 输入框文字颜色 | `#D4DCF2` |
+| | `--prefix-fg` | 提示符前缀文字颜色 | `#D4DCF2` |
+| | `--prefix-bg` | 提示符前缀背景颜色 | `#1B1D2B` |
 
-## Examples
+## 快捷键
 
-```bash
-# Application launcher
-ls /usr/bin | lok -p "Run: " | xargs swaymsg exec --
+| 按键 | 功能 |
+|------|------|
+| 输入 | 过滤列表（模糊匹配 + 拼音） |
+| 上 / Ctrl+P | 上移选中项 |
+| 下 / Ctrl+N | 下移选中项 |
+| 回车 | 确认选择 |
+| Esc / Ctrl+C | 取消 |
+| 退格 | 删除字符 |
+| Ctrl+U | 全部清空 |
+| Ctrl+W | 删除上一个单词 |
+| Tab | 多选 |
+| 鼠标左键 | 选中项目直接返回 |
+| 鼠标右键 | 多选 |
+| 滚轮 | 浏览列表 |
 
-# Power menu
-echo -e "shutdown\nreboot\nlock\nsuspend" | lok -p "Power: " | xargs systemctl
+## 退出码
 
-# Clipboard history
-cliphist list | lok -p "Paste: " | cliphist decode | wl-copy
+| 代码 | 含义 |
+|------|------|
+| 0 | 已选择 |
+| 1 | 用户取消（Esc） |
+| 3 | 错误（如无法连接 Wayland 显示服务器） |
 
-# Multi-select files
-find . -type f | lok -m -p "Files: " | xargs -d '\n' cat
+## CJK 支持
 
-# Multi-select with NUL separator
-find . -type f | lok -m -0 -p "Files: " | xargs -0 stat
-
-# Password input
-lok -P -p "Password: "
-
-# Bottom-anchored menu
-ls | lok -p "Select: " --anchor bottom
-
-# Fixed width
-ls | lok -p "Select: " -W 400
-
-# Output index
-echo -e "first\nsecond\nthird" | lok -i -p "Pick: "
-```
-
-## Keybindings
-
-| Key | Action |
-|-----|--------|
-| Type | Filter list (fuzzy match + pinyin) |
-| Up / Ctrl+P | Move selection up |
-| Down / Ctrl+N | Move selection down |
-| Enter | Confirm selection |
-| Esc / Ctrl+C | Cancel |
-| Backspace | Delete character |
-| Ctrl+U | Clear input |
-| Ctrl+W | Delete word |
-| Tab | Toggle mark (multi-select mode) |
-| Mouse Left | Select item |
-| Mouse Right | Toggle mark (multi-select mode) |
-| Scroll | Navigate list |
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Selection made |
-| 1 | User cancelled (Esc) |
-| 3 | Error (e.g. no Wayland display) |
-
-## CJK Support
-
-- Fuzzy match on original text (works for any language)
-- Pinyin full-match (e.g. type `beijing` to match `北京`)
-- Pinyin initials match (e.g. type `bj` to match `北京`)
-- Multi-pronunciation support (e.g. `行` matches both `hang` and `xing`)
+- 原文模糊匹配
+- 拼音全拼匹配（如输入 `beijing` 匹配 `北京`）
+- 拼音首字母匹配（如输入 `bj` 匹配 `北京`）
+- 多音字支持（如 `行` 同时匹配 `hang` 和 `xing`）

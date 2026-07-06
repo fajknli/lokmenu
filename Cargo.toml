@@ -2,6 +2,11 @@
 name = "lok"
 version = "0.1.0"
 edition = "2021"
+description = "A CJK-optimized Wayland menu tool"
+license = "MIT"
+repository = "https://github.com/fajknli/lok"
+keywords = ["wayland", "menu", "dmenu", "pinyin", "cjk"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }

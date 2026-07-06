@@ -453,6 +453,10 @@ fn estimate_prefix_pixel_width(
             return (glyph.x as i32) + left_padding;
         }
     }
-    // 所有字形都属于前缀（输入为空时），覆盖整行
-    left_padding + 10000
+    // 所有字形都属于前缀（输入为空），取最后一个字形的右边缘
+    if let Some(last) = run.glyphs.last() {
+        (last.x + last.w) as i32 + left_padding
+    } else {
+        left_padding
+    }
 }

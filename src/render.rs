@@ -93,8 +93,7 @@ impl Renderer {
 
         // 测量实际行高
         let base_line_h = self.measure_line_height(font_size, &config.font);
-        // 调整行间距 4px
-        let line_h = base_line_h + 4.0 * scale;
+        let line_h = base_line_h * 1.15;
         let metrics = Metrics::new(font_size, line_h);
 
         let (bg_r, bg_g, bg_b, bg_a) = extract_rgba(config.bg);

@@ -166,7 +166,7 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
     let phys_font_size = app.config.font_size * scale;
     let base_phys_line_h = app.renderer
         .measure_line_height(phys_font_size, &app.config.font);
-    let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as u32;
+    let phys_line_h = (base_phys_line_h * 1.15).ceil() as u32;
     let visible_count = if app.config.password { 0 } else { (app.config.lines as usize).min(app.state.items.len()) };
     let total_rows = (visible_count + 1) as u32;
     let phys_height = total_rows * phys_line_h;
@@ -409,7 +409,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                 let phys_font_size = state.config.font_size * scale;
                 let base_phys_line_h = state.renderer
                     .measure_line_height(phys_font_size, &state.config.font);
-                let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as i32;
+                let phys_line_h = (base_phys_line_h * 1.15).ceil() as i32;
                 let visible_count = if state.config.password { 0 } else { (state.config.lines as usize).min(state.state.items.len()) };
                 let line_count = (visible_count + 1) as i32;
                 let phys_h = line_count * phys_line_h;

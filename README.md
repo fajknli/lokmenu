@@ -8,7 +8,9 @@ wayland 菜单(配合脚本交互使用)
 ## 安装
 
 ```bash
+cargo install lokmenu
 
+git clone <this repo>
 ```
 
 ## 参数

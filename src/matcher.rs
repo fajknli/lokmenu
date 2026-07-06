@@ -1,5 +1,7 @@
 // src/matcher.rs
 
+const MAX_MATCHES: usize = 500;
+
 pub struct MatchResult {
     pub original_idx: usize,
     pub score: i32,
@@ -20,9 +22,11 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
     }
 
     let mut results = Vec::new();
+    let q_chars: Vec<char> = query.chars().collect();
 
     for (idx, item) in items.iter().enumerate() {
-        if let Some(res) = fuzzy_match(item, query) {
+        // 优先级 1: 原文匹配
+        if let Some(res) = fuzzy_match(item, &q_chars) {
             results.push(MatchResult {
                 original_idx: idx,
                 score: res.0 + 1000,
@@ -31,66 +35,72 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
             continue;
         }
 
+        // 优先级 2: 拼音匹配 (跳过空缓存)
         let (full, initials) = &pinyin_cache[idx];
-        // 优化：直接传 query，fuzzy_match 内部已经用 eq_ignore_ascii_case 处理了大小写
-        if let Some(res) = match_pinyin_cached(full, initials, query) {
-            results.push(MatchResult {
-                original_idx: idx,
-                score: res.0,
-                highlight_indices: res.1,
-            });
+        if !initials.is_empty() || !full.is_empty() {
+            if let Some(res) = match_pinyin_cached(full, initials, &q_chars) {
+                results.push(MatchResult {
+                    original_idx: idx,
+                    score: res.0,
+                    highlight_indices: res.1,
+                });
+            }
         }
     }
 
-    results.sort_unstable_by(|a, b| b.score.cmp(&a.score));
+    // Top-K 截断：极速提取前 500 名 (原地截断，零额外内存分配)
+    if results.len() > MAX_MATCHES {
+        results.select_nth_unstable_by(MAX_MATCHES - 1, |a, b| b.score.cmp(&a.score));
+        results.truncate(MAX_MATCHES);
+        results.sort_unstable_by(|a, b| b.score.cmp(&a.score));
+    } else {
+        results.sort_unstable_by(|a, b| b.score.cmp(&a.score));
+    }
+
     results
 }
 
-pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
-    let query_chars: Vec<char> = query.chars().collect();
-
+pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
     let mut text_idx = 0;
     let mut query_idx = 0;
     let mut highlights = Vec::new();
     let mut score = 0;
 
-    // 优化：直接遍历字符，不分配 Vec<char>
     for c in text.chars() {
-        if query_idx >= query_chars.len() { break; }
+        if query_idx >= q_chars.len() { break; }
 
-        if c.eq_ignore_ascii_case(&query_chars[query_idx]) {
-            if !highlights.is_empty() && highlights.last() == Some(&(text_idx - 1)) {
+        if c.eq_ignore_ascii_case(&q_chars[query_idx]) {
+            if matches!(highlights.last(), Some(&h) if h + 1 == text_idx) {
+
                 score += 20;
             } else {
                 score += 10;
             }
-
-            if c == query_chars[query_idx] {
+            if c == q_chars[query_idx] {
                 score += 5;
             }
-
             highlights.push(text_idx);
             query_idx += 1;
         }
         text_idx += 1;
     }
 
-    if query_idx == query_chars.len() {
+    if query_idx == q_chars.len() {
         Some((score, highlights))
     } else {
         None
     }
 }
 
-fn match_pinyin_cached(full: &str, initials: &str, query: &str) -> Option<(i32, Vec<usize>)> {
+fn match_pinyin_cached(full: &str, initials: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
     if !initials.is_empty() {
-        if let Some(res) = fuzzy_match(initials, query) {
+        if let Some(res) = fuzzy_match(initials, q_chars) {
             return Some((res.0 - 10, res.1));
         }
     }
 
     if !full.is_empty() {
-        if let Some(res) = fuzzy_match(full, query) {
+        if let Some(res) = fuzzy_match(full, q_chars) {
             return Some((res.0 - 20, res.1));
         }
     }

@@ -3,7 +3,23 @@ use clap::ValueEnum;
 #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum WindowAnchor {
     Top,
+    TopLeft,
+    TopCenter,
+    TopRight,
     Bottom,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl WindowAnchor {
+    pub fn is_bottom(&self) -> bool {
+        matches!(self, Self::Bottom | Self::BottomLeft | Self::BottomCenter | Self::BottomRight)
+    }
+
+    pub fn is_full_width(&self) -> bool {
+        matches!(self, Self::Top | Self::Bottom)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -19,12 +35,14 @@ pub struct Config {
     pub sbg: u32,
     pub sfg: u32,
     pub hfg: u32,
-    pub prompt_bg: u32,
     pub prompt_fg: u32,
+    pub prompt_bg: u32,
+    pub prefix_fg: u32,
+    pub prefix_bg: u32,
     pub multi_select: bool,
     pub null: bool,
     pub password: bool,
-    pub anchor: WindowAnchor, // 改为 WindowAnchor 枚举
+    pub anchor: WindowAnchor,
 }
 
 impl Default for Config {
@@ -36,17 +54,19 @@ impl Default for Config {
             width: 800,
             font_size: 14.0,
             font: String::new(),
-            bg: 0xFF141522,
-            fg: 0xFFA9B5D5,
-            sbg: 0xFF565D7E,
-            sfg: 0xFFD4DCF2,
-            hfg: 0xFFC93B3B,
+            bg:        0xFF141522,
+            fg:        0xFFD4DCF2,
+            sbg:       0xFF242838,
+            sfg:       0xFFD4DCF2,
+            hfg:       0xFFC93B3B,
             prompt_bg: 0xFF1B1D2B,
-            prompt_fg: 0xFFA9B5D5,
+            prompt_fg: 0xFFD4DCF2,
+            prefix_fg: 0xFFD4DCF2,
+            prefix_bg: 0xFF1B1D2B,
             multi_select: false,
             null: false,
             password: false,
-            anchor: WindowAnchor::Top, // 默认值
+            anchor: WindowAnchor::Top,
         }
     }
 }

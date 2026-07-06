@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use crate::config::Config;
 use crate::matcher;
+use rayon::prelude::*;
 
 pub struct State {
     pub items: Vec<String>,
@@ -25,7 +26,7 @@ pub struct State {
 
 impl State {
     pub fn new(items: Vec<String>, config: &Config) -> Self {
-        let cached_pinyin = items.iter().map(|s| {
+        let cached_pinyin = items.par_iter().map(|s| {
             crate::pinyin::get_pinyin_pair(s)
         }).collect();
 
@@ -52,11 +53,16 @@ impl State {
     }
 
     pub fn update_filter(&mut self) {
-        let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
-        let results = matcher::filter(&items, &self.cached_pinyin, &self.query);
-
-        self.filtered_items = results.iter().map(|r| r.original_idx).collect();
-        self.highlights = results.iter().map(|r| r.highlight_indices.clone()).collect();
+        if self.query.is_empty() {
+            // 空查询：直接用原始索引，不需要跑 matcher
+            self.filtered_items = (0..self.items.len()).collect();
+            self.highlights = vec![Vec::new(); self.items.len()];
+        } else {
+            let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
+            let results = matcher::filter(&items, &self.cached_pinyin, &self.query);
+            self.filtered_items = results.iter().map(|r| r.original_idx).collect();
+            self.highlights = results.iter().map(|r| r.highlight_indices.clone()).collect();
+        }
 
         if self.selected_idx >= self.filtered_items.len() {
             self.selected_idx = 0;

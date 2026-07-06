@@ -12,6 +12,8 @@ mod wayland;
 use std::io::IsTerminal;
 use config::{Config, WindowAnchor};
 
+
+
 #[derive(Parser, Debug)]
 #[command(name = "lok", about = "CJK-optimized Wayland menu tool")]
 struct Cli {
@@ -39,7 +41,7 @@ struct Cli {
     #[arg(short = 'P', long)]
     password: bool,
 
-    /// 窗口垂直位置
+    /// 窗口位置: top, top-left, top-center, top-right, bottom, bottom-left, bottom-center, bottom-right
     #[arg(long, value_enum, default_value_t = WindowAnchor::Top)]
     anchor: WindowAnchor,
 
@@ -60,11 +62,11 @@ struct Cli {
     bg: String,
 
     /// 普通文字颜色
-    #[arg(long, default_value = "#A9B5D5")]
+    #[arg(long, default_value = "#D4DCF2")]
     fg: String,
 
     /// 选中项背景颜色
-    #[arg(long, default_value = "#565D7E")]
+    #[arg(long, default_value = "#242838")]
     sbg: String,
 
     /// 选中项文字颜色
@@ -75,13 +77,21 @@ struct Cli {
     #[arg(long, default_value = "#C93B3B")]
     hfg: String,
 
+    /// 输入框文字颜色
+    #[arg(long, default_value = "#D4DCF2")]
+    prompt_fg: String,
+
     /// 输入框背景颜色
     #[arg(long, default_value = "#1B1D2B")]
     prompt_bg: String,
 
-    /// 输入框文字颜色
-    #[arg(long, default_value = "#A9B5D5")]
-    prompt_fg: String,
+    /// 提示符前缀文字颜色
+    #[arg(long, default_value = "#D4DCF2")]
+    prefix_fg: String,
+
+    /// 提示符前缀背景颜色
+    #[arg(long, default_value = "#1B1D2B")]
+    prefix_bg: String,
 }
 
 fn parse_color(s: &str) -> u32 {
@@ -144,12 +154,14 @@ fn main() {
         sbg: parse_color(&cli.sbg),
         sfg: parse_color(&cli.sfg),
         hfg: parse_color(&cli.hfg),
-        prompt_bg: parse_color(&cli.prompt_bg),
         prompt_fg: parse_color(&cli.prompt_fg),
+        prompt_bg: parse_color(&cli.prompt_bg),
+        prefix_fg: parse_color(&cli.prefix_fg),
+        prefix_bg: parse_color(&cli.prefix_bg),
         multi_select: cli.multi_select,
         null: cli.null,
-        password: cli.password,    // 新增
-        anchor: cli.anchor,        // 新增
+        password: cli.password,
+        anchor: cli.anchor,
     };
 
     match wayland::run(items, config) {

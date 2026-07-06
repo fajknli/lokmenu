@@ -172,19 +172,29 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
     let phys_height = total_rows * phys_line_h;
     let height = (phys_height as f32 / scale).ceil() as u32;
 
-    // 注意：这里的 Anchor 是 wayland_protocols_wlr 里的，不会和 WindowAnchor 冲突
-    let (anchor_full, anchor_left) = match app.config.anchor {
-        WindowAnchor::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, Anchor::Bottom | Anchor::Left),
-        WindowAnchor::Top => (Anchor::Top | Anchor::Left | Anchor::Right, Anchor::Top | Anchor::Left),
+
+    let layer_anchor = match app.config.anchor {
+        WindowAnchor::Top          => Anchor::Top | Anchor::Left | Anchor::Right,
+        WindowAnchor::TopLeft      => Anchor::Top | Anchor::Left,
+        WindowAnchor::TopCenter    => Anchor::Top,
+        WindowAnchor::TopRight     => Anchor::Top | Anchor::Right,
+        WindowAnchor::Bottom       => Anchor::Bottom | Anchor::Left | Anchor::Right,
+        WindowAnchor::BottomLeft   => Anchor::Bottom | Anchor::Left,
+        WindowAnchor::BottomCenter => Anchor::Bottom,
+        WindowAnchor::BottomRight  => Anchor::Bottom | Anchor::Right,
     };
 
-    if app.config.width == 0 {
-        layer_surface.set_anchor(anchor_full);
-        layer_surface.set_size(0, height);
+    layer_surface.set_anchor(layer_anchor);
+
+    let is_full_width = app.config.anchor.is_full_width();
+    let request_width = if is_full_width && app.config.width == 0 {
+        0
+    } else if app.config.width == 0 {
+        800
     } else {
-        layer_surface.set_anchor(anchor_left);
-        layer_surface.set_size(app.config.width, height);
-    }
+        app.config.width
+    };
+    layer_surface.set_size(request_width, height);
 
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
     surface.commit();
@@ -388,8 +398,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                 proxy.ack_configure(serial);
                 state.configured = true;
 
-                let w_u32 = if width == 0 { state.config.width } else { width };
-                let w_u32 = if w_u32 == 0 { 800 } else { w_u32 };
+                let is_full_width = state.config.anchor.is_full_width();
+                let w_u32 = if width == 0 {
+                    if is_full_width && state.config.width == 0 { 800 } else if state.config.width == 0 { 800 } else { state.config.width }
+                } else {
+                    width
+                };
 
                 let scale = state.fractional_scale as f32 / 120.0;
                 let phys_font_size = state.config.font_size * scale;
@@ -464,19 +478,26 @@ impl Dispatch<WlKeyboard, ()> for App {
             Event::Key { state: key_state, key, .. } => {
                 if key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     if state.ctrl_pressed {
+                        let is_bottom = state.config.anchor.is_bottom();
                         match key {
                             46 => { state.state.cancel(); return; }     // Ctrl + C
                             22 => { state.state.clear_query(); return; } // Ctrl + U
                             17 => { state.state.delete_word(); return; } // Ctrl + W
-                            25 => { state.state.move_up(); return; }     // Ctrl + P
-                            49 => { state.state.move_down(); return; }   // Ctrl + N
+                            25 => {                                      // Ctrl + P
+                                if is_bottom { state.state.move_down(); } else { state.state.move_up(); }
+                                return;
+                            }
+                            49 => {                                      // Ctrl + N
+                                if is_bottom { state.state.move_up(); } else { state.state.move_down(); }
+                                return;
+                            }
                             _ => {}
                         }
                         return;
                     }
 
                     match key {
-                        29 | 42 | 54 | 56 | 97 | 100 | 125 | 126 => return, // 忽略修饰键
+                        29 | 42 | 54 | 56 | 97 | 100 | 125 | 126 => return,
                         1  => { state.state.cancel(); return; }      // Esc
                         14 => { state.state.backspace(); return; }   // Bksp
                         15 => {
@@ -489,8 +510,16 @@ impl Dispatch<WlKeyboard, ()> for App {
                             state.state.select_current(state.config.multi_select);
                             return;
                         }
-                        103 => { state.state.move_up(); return; }    // Up
-                        108 => { state.state.move_down(); return; }  // Down
+                        103 => {                                       // Up
+                            let is_bottom = state.config.anchor.is_bottom();
+                            if is_bottom { state.state.move_down(); } else { state.state.move_up(); }
+                            return;
+                        }
+                        108 => {                                       // Down
+                            let is_bottom = state.config.anchor.is_bottom();
+                            if is_bottom { state.state.move_up(); } else { state.state.move_down(); }
+                            return;
+                        }
                         _ => {}
                     }
 
@@ -515,7 +544,8 @@ impl Dispatch<WlPointer, ()> for App {
             }
             Event::Button { button, state: btn_state, .. } => {
                 if btn_state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) {
-                    if button == 0x110 { // BTN_LEFT
+                    if button == 0x110 || button == 0x111 {
+                        let is_bottom = state.config.anchor.is_bottom();
                         let scale = state.fractional_scale as f32 / 120.0;
                         let phys_font_size = state.config.font_size * scale;
                         let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
@@ -524,30 +554,42 @@ impl Dispatch<WlPointer, ()> for App {
                         if phys_line_h > 0.0 {
                             let logical_line_h = phys_line_h / scale;
                             let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
+                            let config_lines = state.config.lines as usize;
+                            let visible_items = state.state.filtered_items.len().min(config_lines);
 
-                            if clicked_row >= 1 {
-                                let target_idx = state.state.scroll_offset + clicked_row.saturating_sub(1);
+                            let target_idx_opt = if is_bottom {
+                                // 底部模式：prompt 在最后一行，列表反序
+                                let prompt_row = config_lines;
+                                if clicked_row < prompt_row {
+                                    let dist_from_prompt = prompt_row - 1 - clicked_row;
+                                    if dist_from_prompt < visible_items {
+                                        Some(state.state.scroll_offset + dist_from_prompt)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                // 顶部模式：prompt 在第 0 行
+                                if clicked_row >= 1 {
+                                    let item_row = clicked_row - 1;
+                                    if item_row < visible_items {
+                                        Some(state.state.scroll_offset + item_row)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some(target_idx) = target_idx_opt {
                                 if target_idx < state.state.filtered_items.len() {
                                     state.state.selected_idx = target_idx;
-                                    state.state.select_current(state.config.multi_select);
-                                }
-                            }
-                        }
-                    } else if button == 0x111 { // BTN_RIGHT
-                        if state.config.multi_select {
-                            let scale = state.fractional_scale as f32 / 120.0;
-                            let phys_font_size = state.config.font_size * scale;
-                            let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
-                            let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as f32;
-
-                            if phys_line_h > 0.0 {
-                                let logical_line_h = phys_line_h / scale;
-                                let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
-
-                                if clicked_row >= 1 {
-                                    let target_idx = state.state.scroll_offset + clicked_row.saturating_sub(1);
-                                    if target_idx < state.state.filtered_items.len() {
-                                        state.state.selected_idx = target_idx;
+                                    if button == 0x110 {
+                                        state.state.select_current(state.config.multi_select);
+                                    } else if button == 0x111 && state.config.multi_select {
                                         state.state.toggle_mark();
                                     }
                                 }
@@ -560,11 +602,14 @@ impl Dispatch<WlPointer, ()> for App {
                 if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
                     let steps = (value120 / 120).abs() as usize;
                     let lines_per_step = 3;
+                    let is_bottom = state.config.anchor.is_bottom();
 
                     if value120 > 0 {
-                        state.state.move_down_by(steps * lines_per_step);
+                        if is_bottom { state.state.move_up_by(steps * lines_per_step); }
+                        else { state.state.move_down_by(steps * lines_per_step); }
                     } else if value120 < 0 {
-                        state.state.move_up_by(steps * lines_per_step);
+                        if is_bottom { state.state.move_down_by(steps * lines_per_step); }
+                        else { state.state.move_up_by(steps * lines_per_step); }
                     }
                 }
             }
@@ -572,11 +617,14 @@ impl Dispatch<WlPointer, ()> for App {
                 if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
                     state.axis_accumulator += value;
                     let threshold = 15.0;
+                    let is_bottom = state.config.anchor.is_bottom();
                     if state.axis_accumulator > threshold {
-                        state.state.move_down_by(3);
+                        if is_bottom { state.state.move_up_by(3); }
+                        else { state.state.move_down_by(3); }
                         state.axis_accumulator = 0.0;
                     } else if state.axis_accumulator < -threshold {
-                        state.state.move_up_by(3);
+                        if is_bottom { state.state.move_down_by(3); }
+                        else { state.state.move_up_by(3); }
                         state.axis_accumulator = 0.0;
                     }
                 }

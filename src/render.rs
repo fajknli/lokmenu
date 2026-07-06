@@ -9,6 +9,7 @@ struct LineInfo {
     is_selected: bool,
     is_marked: bool,
     highlights: Vec<usize>,
+    prefix_byte_len: usize,
 }
 
 pub struct Renderer {
@@ -92,7 +93,8 @@ impl Renderer {
 
         // 测量实际行高
         let base_line_h = self.measure_line_height(font_size, &config.font);
-        let line_h = base_line_h + 6.0 * scale; // 增加 6 逻辑像素的行间距
+        // 调整行间距 4px
+        let line_h = base_line_h + 4.0 * scale;
         let metrics = Metrics::new(font_size, line_h);
 
         let (bg_r, bg_g, bg_b, bg_a) = extract_rgba(config.bg);
@@ -100,8 +102,10 @@ impl Renderer {
         let (sbg_r, sbg_g, sbg_b, sbg_a) = extract_rgba(config.sbg);
         let (sfg_r, sfg_g, sfg_b, _) = extract_rgba(config.sfg);
         let (hfg_r, hfg_g, hfg_b, _) = extract_rgba(config.hfg);
-        let (pbg_r, pbg_g, pbg_b, pbg_a) = extract_rgba(config.prompt_bg);
         let (pfg_r, pfg_g, pfg_b, _) = extract_rgba(config.prompt_fg);
+        let (pbg_r, pbg_g, pbg_b, pbg_a) = extract_rgba(config.prompt_bg);
+        let (pxfg_r, pxfg_g, pxfg_b, _) = extract_rgba(config.prefix_fg);
+        let (pxbg_r, pxbg_g, pxbg_b, pxbg_a) = extract_rgba(config.prefix_bg);
 
         let bg_pixel = [bg_b, bg_g, bg_r, bg_a]; // 使用带透明度的像素
         for chunk in pixels.chunks_exact_mut(4) {
@@ -117,22 +121,25 @@ impl Renderer {
             state.query.clone()
         };
 
-        lines.push(LineInfo {
+        let prompt_line = LineInfo {
             text: format!("{}{}{}", config.prompt, display_query, state.preedit),
             is_selected: false,
             is_marked: false,
             highlights: Vec::new(),
-        });
+            prefix_byte_len: config.prompt.len(),
+        };
+
+        let mut list_lines: Vec<LineInfo> = Vec::new();
 
         // 非密码模式才渲染列表
         if !config.password {
             if state.filtered_items.is_empty() {
-                // 没有匹配项时，直接显示输入框内容
-                lines.push(LineInfo {
+                list_lines.push(LineInfo {
                     text: state.query.clone(),
                     is_selected: true,
                     is_marked: false,
                     highlights: Vec::new(),
+                    prefix_byte_len: 0,
                 });
             } else {
                 let max_chars = ((width as f32 / (font_size * 0.65)) as usize).max(10);
@@ -154,22 +161,39 @@ impl Renderer {
                     let is_marked = state.marked_items.contains(&orig_idx);
                     let highlights = state.highlights.get(i).cloned().unwrap_or_default();
 
-                    lines.push(LineInfo {
+                    list_lines.push(LineInfo {
                         text: display_item,
                         is_selected,
                         is_marked,
                         highlights,
+                        prefix_byte_len: 0,
                     });
                 }
             }
         }
 
-        // 如果没有在输入中文预编辑，在第一行文本末尾追加光标
-        let cursor = "│";
-        if state.preedit.is_empty() {
-            if let Some(first_line) = lines.get_mut(0) {
-                first_line.text.push_str(cursor);
+        let is_bottom = config.anchor.is_bottom();
+        let prompt_idx: usize;
+
+        if is_bottom {
+            let padding = config.lines.saturating_sub(list_lines.len() as u32) as usize;
+            for _ in 0..padding {
+                lines.push(LineInfo {
+                    text: String::new(),
+                    is_selected: false,
+                    is_marked: false,
+                    highlights: Vec::new(),
+                    prefix_byte_len: 0,
+                });
             }
+            list_lines.reverse();
+            lines.extend(list_lines);
+            prompt_idx = lines.len();
+            lines.push(prompt_line);
+        } else {
+            prompt_idx = 0;
+            lines.push(prompt_line);
+            lines.extend(list_lines);
         }
 
         let full_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
@@ -213,17 +237,31 @@ impl Renderer {
 
         let actual_rect_h = line_h.ceil() as i32;
 
+
         for (i, run) in runs.iter().enumerate() {
             if i >= lines.len() { break; }
             let y_top = run.line_top.floor() as i32;
 
-            if i == 0 {
-                fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, pbg_r, pbg_g, pbg_b, pbg_a);
+            if i == prompt_idx {
+                let prompt_info = &lines[i];
+                let left_padding = (8.0 * scale).round() as i32;
+                if prompt_info.prefix_byte_len > 0 {
+                    // 前缀段背景
+                    let prefix_end_x = estimate_prefix_pixel_width(
+                        prompt_info.prefix_byte_len, left_padding, run,
+                    );
+                    fill_rect(pixels, stride, width, height, 0, y_top, prefix_end_x, actual_rect_h, pxbg_r, pxbg_g, pxbg_b, pxbg_a);
+                    // 输入段背景
+                    fill_rect(pixels, stride, width, height, prefix_end_x, y_top, width - prefix_end_x, actual_rect_h, pbg_r, pbg_g, pbg_b, pbg_a);
+                } else {
+                    // 无前缀，整行用 prompt_bg
+                    fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, pbg_r, pbg_g, pbg_b, pbg_a);
+                }
             } else {
+                // 列表行背景（和原来一样）
                 if lines[i].is_selected {
                     fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, sbg_r, sbg_g, sbg_b, sbg_a);
                 }
-
                 if lines[i].is_marked {
                     let line_width = (3.0 * scale).round() as i32;
                     fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, hfg_r, hfg_g, hfg_b, 255);
@@ -251,10 +289,17 @@ impl Renderer {
                         .unwrap_or(0);
                     let is_highlight = line_info.highlights.contains(&char_idx);
 
-                    let (r, g, b) = if line_info.is_selected {
-                        (sfg_r, sfg_g, sfg_b)
-                    } else if i == 0 {
-                        (pfg_r, pfg_g, pfg_b)
+                    let (r, g, b) = if line_info.is_selected && is_highlight {
+                        (hfg_r, hfg_g, hfg_b)  // 选中 + 匹配字符，用高亮色
+                    } else if line_info.is_selected {
+                        (sfg_r, sfg_g, sfg_b)  // 选中但非匹配字符，用选中色
+                    } else if i == prompt_idx {
+                        let _left_padding = (8.0 * scale).round() as i32;
+                        if line_info.prefix_byte_len > 0 && (glyph.start as i32) < line_info.prefix_byte_len as i32 {
+                            (pxfg_r, pxfg_g, pxfg_b)
+                        } else {
+                            (pfg_r, pfg_g, pfg_b)
+                        }
                     } else if is_highlight {
                         (hfg_r, hfg_g, hfg_b)
                     } else {
@@ -323,6 +368,32 @@ impl Renderer {
                 }
             }
         }
+        // 硬件光标：在 prompt 行最后一个字符后面画竖线
+        if state.preedit.is_empty() {
+            if let Some(prompt_run) = runs.get(prompt_idx) {
+                let left_padding = (8.0 * scale).round() as i32;
+                let y_top = prompt_run.line_top.floor() as i32;
+                let cursor_w = (2.0 * scale).round() as i32;
+
+                // 高度取字体高度的 75%，上下留空
+                let cursor_h = (base_line_h * 0.95).round() as i32;
+                let cursor_y = y_top + ((actual_rect_h - cursor_h) / 2).max(0);
+
+                let (cr, cg, cb) = (pfg_r, pfg_g, pfg_b);
+
+                // 定位：紧跟最后一个字形后面
+                let cursor_x = match prompt_run.glyphs.last() {
+                    Some(last_glyph) => {
+                        let phys = last_glyph.physical((0.0, prompt_run.line_y), scale);
+                        // 字符光标间距
+                        phys.x + (last_glyph.w * scale).round() as i32 + left_padding + 2
+                    }
+                    None => left_padding, // 空输入框，光标在左侧 padding 处
+                };
+
+                fill_rect(pixels, stride, width, height, cursor_x, cursor_y, cursor_w, cursor_h, cr, cg, cb, 255);
+            }
+        }
     }
 }
 
@@ -371,4 +442,18 @@ fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: 
         // 按行一次性拷贝
         pixels[start_idx..start_idx + row_len].copy_from_slice(&row);
     }
+}
+
+fn estimate_prefix_pixel_width(
+    prefix_byte_len: usize,
+    left_padding: i32,
+    run: &cosmic_text::LayoutRun,
+) -> i32 {
+    for glyph in run.glyphs.iter() {
+        if glyph.start >= prefix_byte_len {
+            return (glyph.x as i32) + left_padding;
+        }
+    }
+    // 所有字形都属于前缀（输入为空时），覆盖整行
+    left_padding + 10000
 }

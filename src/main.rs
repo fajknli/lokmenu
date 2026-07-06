@@ -26,12 +26,16 @@ struct Cli {
     #[arg(short = 'n', long, default_value_t = 0)]
     lines: u32,
 
+    /// 启用多选模式 (按 Tab 标记/取消标记，回车返回所有标记项)
+    #[arg(short = 'm', long)]
+    multi_select: bool,
+
     /// 窗口宽度 (0 表示铺满屏幕宽度)
     #[arg(short = 'W', long, default_value_t = 0)]
     width: u32,
 
     /// 字体大小
-    #[arg(short, long, default_value_t = 18.0)]
+    #[arg(short, long, default_value_t = 14.0)]
     font_size: f32,
 
     /// 字体名称
@@ -123,6 +127,7 @@ fn main() {
         hfg: parse_color(&cli.hfg),
         prompt_bg: parse_color(&cli.prompt_bg),
         prompt_fg: parse_color(&cli.prompt_fg),
+        multi_select: cli.multi_select,
     };
 
     match wayland::run(items, config) {

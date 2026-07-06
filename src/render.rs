@@ -7,6 +7,7 @@ use crate::state::State;
 struct LineInfo {
     text: String,
     is_selected: bool,
+    is_marked: bool,
     highlights: Vec<usize>,
 }
 
@@ -18,6 +19,10 @@ pub struct Renderer {
     last_text: String,
     last_width: i32,
     last_height: i32,
+    last_scale: f32,
+    cached_line_h: f32,
+    cached_font_size: f32,
+    cached_font_name: String,
 }
 
 impl Renderer {
@@ -33,13 +38,61 @@ impl Renderer {
             last_text: String::new(),
             last_width: 0,
             last_height: 0,
+            last_scale: 1.0,
+            cached_line_h: 0.0,
+            cached_font_size: 0.0,
+            cached_font_name: String::new(),
         }
     }
 
-    pub fn draw_frame(&mut self, pixels: &mut [u8], width: i32, height: i32, state: &State, config: &Config) {
+    /// 测量字体的实际行高（考虑中英文混合）
+    /// 通过构造两行文本，计算 line_top 的差值来获得最精确的实际行高
+    pub fn measure_line_height(&mut self, font_size: f32, font: &str) -> f32 {
+        if self.cached_line_h > 0.0
+            && (self.cached_font_size - font_size).abs() < 0.01
+            && self.cached_font_name == font
+        {
+            return self.cached_line_h;
+        }
+
+        let metrics = Metrics::new(font_size, font_size * 1.5);
+        let mut buf = Buffer::new(&mut self.font_system, metrics);
+
+        // 设定足够大的尺寸防止换行
+        buf.set_size(&mut self.font_system, 10000.0, 10000.0);
+
+        let attrs = Attrs::new()
+            .family(Family::Name(font))
+            .family(Family::SansSerif);
+
+        // 放入两行包含中英文的文字
+        buf.set_text(&mut self.font_system, "Ayg中文\nAyg中文", attrs, Shaping::Advanced);
+        buf.shape_until_scroll(&mut self.font_system, false);
+
+        let mut runs = buf.layout_runs();
+        let mut line_h = font_size * 1.5; // 默认 fallback
+
+        // 获取第一行和第二行的 line_top，它们的差值就是完美的行高
+        if let Some(first) = runs.next() {
+            if let Some(second) = runs.next() {
+                line_h = second.line_top - first.line_top;
+            }
+        }
+
+        self.cached_line_h = line_h;
+        self.cached_font_size = font_size;
+        self.cached_font_name = font.to_string();
+
+        line_h
+    }
+
+    pub fn draw_frame(&mut self, pixels: &mut [u8], width: i32, height: i32, scale: f32, state: &State, config: &Config) {
         let stride = width * 4;
-        let font_size = config.font_size;
-        let line_h = (font_size * 1.5).ceil();
+        let font_size = config.font_size * scale;
+
+        // 测量实际行高
+        let base_line_h = self.measure_line_height(font_size, &config.font);
+        let line_h = base_line_h + 6.0 * scale; // 增加 6 逻辑像素的行间距
         let metrics = Metrics::new(font_size, line_h);
 
         let (bg_r, bg_g, bg_b) = extract_rgb(config.bg);
@@ -59,13 +112,15 @@ impl Renderer {
         lines.push(LineInfo {
             text: format!("{}{}{}", config.prompt, state.query, state.preedit),
             is_selected: false,
+            is_marked: false,
             highlights: Vec::new(),
         });
 
         if state.filtered_items.is_empty() {
             lines.push(LineInfo {
-                text: "No matches found".to_string(),
-                is_selected: false,
+                text: format!("Echo: {}", state.query),
+                is_selected: true,
+                is_marked: false,
                 highlights: Vec::new(),
             });
         } else {
@@ -85,11 +140,13 @@ impl Renderer {
                 };
 
                 let is_selected = i == state.selected_idx;
+                let is_marked = state.marked_items.contains(&orig_idx); // 新增
                 let highlights = state.highlights.get(i).cloned().unwrap_or_default();
 
                 lines.push(LineInfo {
                     text: display_item,
                     is_selected,
+                    is_marked,
                     highlights,
                 });
             }
@@ -97,10 +154,10 @@ impl Renderer {
 
         let full_text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
 
-        // shape 缓存：文本没变且尺寸没变时跳过 shape
         let needs_shape = full_text != self.last_text
             || width != self.last_width
-            || height != self.last_height;
+            || height != self.last_height
+            || scale != self.last_scale;
 
         if needs_shape {
             self.buffer.set_metrics(&mut self.font_system, metrics);
@@ -126,21 +183,34 @@ impl Renderer {
             self.last_text = full_text;
             self.last_width = width;
             self.last_height = height;
+            self.last_scale = scale;
         }
 
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
+        // 使用我们测量的实际高度绘制背景，不依赖 run.line_height
+        let actual_rect_h = line_h.ceil() as i32;
+
         for (i, run) in runs.iter().enumerate() {
             if i >= lines.len() { break; }
             let y_top = run.line_top.floor() as i32;
-            let rect_h = line_h as i32;
 
             if i == 0 {
-                fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, pbg_r, pbg_g, pbg_b);
-            } else if lines[i].is_selected {
-                fill_rect(pixels, stride, width, height, 0, y_top, width, rect_h, sbg_r, sbg_g, sbg_b);
-                // 选中指示：左侧 3px 竖线
-                fill_rect(pixels, stride, width, height, 0, y_top, 3, rect_h, sfg_r, sfg_g, sfg_b);
+                fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, pbg_r, pbg_g, pbg_b);
+            } else {
+                // 画选中或标记的背景
+                if lines[i].is_selected {
+                    fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, sbg_r, sbg_g, sbg_b);
+                }
+
+                // 画左侧指示条：被标记用红色(hfg)，仅被选中用亮白色
+                if lines[i].is_marked {
+                    let line_width = (3.0 * scale).round() as i32;
+                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, hfg_r, hfg_g, hfg_b);
+                } else if lines[i].is_selected {
+                    let line_width = (3.0 * scale).round() as i32;
+                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, sfg_r, sfg_g, sfg_b);
+                }
             }
         }
 
@@ -149,10 +219,11 @@ impl Renderer {
             let line_info = &lines[i];
 
             for glyph in run.glyphs.iter() {
-                let physical = glyph.physical((0.0, run.line_y), 1.0);
+                let physical = glyph.physical((0.0, run.line_y), scale);
                 if let Some(image) = self.swash_cache.get_image(&mut self.font_system, physical.cache_key) {
                     let placement = image.placement;
-                    let px = physical.x + placement.left;
+                    let left_padding = (8.0 * scale).round() as i32; // 新增：文字左侧留出 8 像素
+                    let px = physical.x + placement.left + left_padding; // 修改这里
                     let py = physical.y - placement.top;
 
                     let char_idx = line_info.text.get(..glyph.start)
@@ -165,7 +236,7 @@ impl Renderer {
                     } else if i == 0 {
                         (pfg_r, pfg_g, pfg_b)
                     } else if is_highlight {
-                        (hfg_r, hfg_g, hfg_b) // 修改这里：使用冷红高亮
+                        (hfg_r, hfg_g, hfg_b)
                     } else {
                         (fg_r, fg_g, fg_b)
                     };

@@ -59,11 +59,18 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
 
     while text_idx < text_chars.len() && query_idx < query_chars.len() {
         if text_chars[text_idx].eq_ignore_ascii_case(&query_chars[query_idx]) {
+            // 连续匹配奖励
             if !highlights.is_empty() && highlights.last() == Some(&(text_idx - 1)) {
-                score += 20; // 连续匹配奖励
+                score += 20;
             } else {
                 score += 10;
             }
+
+            // 新增：如果大小写完全一致，额外加分
+            if text_chars[text_idx] == query_chars[query_idx] {
+                score += 5;
+            }
+
             highlights.push(text_idx);
             query_idx += 1;
         }

@@ -13,6 +13,7 @@ pub struct Config {
     pub hfg: u32,        // 新增：高亮匹配字符颜色
     pub prompt_bg: u32,
     pub prompt_fg: u32,
+    pub multi_select: bool,
 }
 
 impl Default for Config {
@@ -22,7 +23,7 @@ impl Default for Config {
             output_index: false,
             lines: 8,
             width: 800,
-            font_size: 18.0,
+            font_size: 14.0,
             font: "Noto Sans".to_string(),
             bg: 0xFF141522,       // 极暗冷黑
             fg: 0xFFA9B5D5,       // 基准冷白
@@ -31,6 +32,7 @@ impl Default for Config {
             hfg: 0xFFC93B3B,      // 冷警示红 (匹配字符高亮)
             prompt_bg: 0xFF1B1D2B,// 微冷黑 (压暗输入框背景)
             prompt_fg: 0xFFA9B5D5,// 基准冷白
+            multi_select: false,
         }
     }
 }

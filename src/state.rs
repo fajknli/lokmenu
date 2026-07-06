@@ -17,6 +17,7 @@ pub struct State {
     pub marked_items: HashSet<usize>,
     pub null_sep: bool,
     pub output: Option<String>,
+    pub output_indices: Vec<usize>,
     pub selected_original_idx: Option<usize>,
     pub exit_code: Option<i32>,
     pub need_redraw: bool,
@@ -41,6 +42,7 @@ impl State {
             marked_items: HashSet::new(),
             null_sep: config.null,
             output: None,
+            output_indices: Vec::new(),
             selected_original_idx: None,
             exit_code: None,
             need_redraw: true,
@@ -130,6 +132,21 @@ impl State {
         }
     }
 
+    // 新增：批量向下移动
+    pub fn move_down_by(&mut self, n: usize) {
+        if self.filtered_items.is_empty() { return; }
+        self.selected_idx = (self.selected_idx + n).min(self.filtered_items.len() - 1);
+        self.adjust_scroll();
+        self.need_redraw = true;
+    }
+
+    pub fn move_up_by(&mut self, n: usize) {
+        if self.filtered_items.is_empty() { return; } // 增加空列表保护
+        self.selected_idx = self.selected_idx.saturating_sub(n);
+        self.adjust_scroll();
+        self.need_redraw = true;
+    }
+
     pub fn toggle_mark(&mut self) {
         if let Some(&idx) = self.filtered_items.get(self.selected_idx) {
             if !self.marked_items.insert(idx) {
@@ -155,15 +172,17 @@ impl State {
     pub fn select_current(&mut self, multi_select: bool) {
         if multi_select && !self.marked_items.is_empty() {
             let mut result: Vec<String> = Vec::new();
+            let mut indices = Vec::new(); // 新增
             for (idx, item) in self.items.iter().enumerate() {
                 if self.marked_items.contains(&idx) {
                     result.push(item.clone());
+                    indices.push(idx); // 新增
                 }
             }
 
-            // 根据 null_sep 选择分隔符
             let sep = if self.null_sep { "\0" } else { "\n" };
             self.output = Some(result.join(sep));
+            self.output_indices = indices; // 新增
             self.selected_original_idx = Some(usize::MAX);
             self.exit_code = Some(0);
             return;
@@ -171,9 +190,11 @@ impl State {
 
         if let Some(&idx) = self.filtered_items.get(self.selected_idx) {
             self.output = Some(self.items[idx].clone());
+            self.output_indices = vec![idx]; // 新增
             self.selected_original_idx = Some(idx);
         } else {
             self.output = Some(self.query.clone());
+            self.output_indices = Vec::new(); // 新增
             self.selected_original_idx = Some(usize::MAX);
         }
         self.exit_code = Some(0);

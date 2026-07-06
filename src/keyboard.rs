@@ -44,6 +44,8 @@ pub fn get_char(key: u32, shift: bool) -> Option<char> {
         38 => Some(if shift { 'L' } else { 'l' }),
         39 => Some(if shift { ':' } else { ';' }),
         40 => Some(if shift { '"' } else { '\'' }),
+        41 => Some(if shift { '~' } else { '`' }),
+        43 => Some(if shift { '|' } else { '\\' }),
 
         // 第三排字母
         44 => Some(if shift { 'Z' } else { 'z' }),

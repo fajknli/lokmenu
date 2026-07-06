@@ -33,7 +33,7 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport,
 };
 
-use crate::config::Config;
+use crate::config::{Config, WindowAnchor};
 use crate::keyboard::get_char;
 use crate::render::Renderer;
 use crate::state::State;
@@ -74,20 +74,20 @@ pub struct App {
     pub ctrl_pressed: bool,
     pub buffers: [Option<BufferSlot>; 2],
     pub configured: bool,
-    pub width: i32,            // 物理宽度
-    pub height: i32,           // 物理高度
-    pub logical_width: i32,    // 新增：逻辑宽度
-    pub logical_height: i32,   // 新增：逻辑高度
-    pub fractional_scale: u32, // 新增：缩放比例 (120 = 1.0x, 180 = 1.5x)
-    pub fractional_scale_manager: Option<WpFractionalScaleManagerV1>, // 新增
-    pub viewporter: Option<WpViewporter>,                             // 新增
-    pub viewport: Option<WpViewport>,                                 // 新增
-    pub fractional_scale_obj: Option<WpFractionalScaleV1>,            // 新增
-    pub pointer_y: f64,        // 新增：记录鼠标逻辑 Y 坐标
-    pub axis_accumulator: f64, // 新增：滚轮累加值
+    pub width: i32,
+    pub height: i32,
+    pub logical_width: i32,
+    pub logical_height: i32,
+    pub fractional_scale: u32,
+    pub fractional_scale_manager: Option<WpFractionalScaleManagerV1>,
+    pub viewporter: Option<WpViewporter>,
+    pub viewport: Option<WpViewport>,
+    pub fractional_scale_obj: Option<WpFractionalScaleV1>,
+    pub pointer_y: f64,
+    pub axis_accumulator: f64,
 }
 
-pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, String)>> {
+pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>, String)>> {
     let conn = Connection::connect_to_env().map_err(|e| {
         io::Error::new(io::ErrorKind::ConnectionRefused, format!("Wayland connect failed: {:?}", e))
     })?;
@@ -113,7 +113,6 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
         io::Error::new(io::ErrorKind::NotFound, "text-input-v3 protocol not supported")
     })?;
 
-    // 尝试绑定分数缩放和视口协议 (如果不支持则为 None，不影响运行)
     let fractional_scale_manager: Option<WpFractionalScaleManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
 
@@ -135,19 +134,18 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
         height: 0,
         logical_width: 0,
         logical_height: 0,
-        fractional_scale: 120, // 默认 1.0x
+        fractional_scale: 120,
         fractional_scale_manager,
         viewporter,
         viewport: None,
         fractional_scale_obj: None,
-        pointer_y: 0.0,        // 新增
-        axis_accumulator: 0.0, // 新增
+        pointer_y: 0.0,
+        axis_accumulator: 0.0,
     };
 
     let surface = app.compositor.create_surface(&qh, ());
     app.surface = Some(surface.clone());
 
-    // 为 surface 绑定分数缩放和视口对象
     if let Some(fsm) = &app.fractional_scale_manager {
         let fs = fsm.get_fractional_scale(&surface, &qh, ());
         app.fractional_scale_obj = Some(fs);
@@ -168,18 +166,23 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     let phys_font_size = app.config.font_size * scale;
     let base_phys_line_h = app.renderer
         .measure_line_height(phys_font_size, &app.config.font);
-    // 加上和渲染时一样的 6.0 * scale 行间距
     let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as u32;
-    let visible_count = (app.config.lines as usize).min(app.state.items.len());
+    let visible_count = if app.config.password { 0 } else { (app.config.lines as usize).min(app.state.items.len()) };
     let total_rows = (visible_count + 1) as u32;
     let phys_height = total_rows * phys_line_h;
     let height = (phys_height as f32 / scale).ceil() as u32;
 
+    // 注意：这里的 Anchor 是 wayland_protocols_wlr 里的，不会和 WindowAnchor 冲突
+    let (anchor_full, anchor_left) = match app.config.anchor {
+        WindowAnchor::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, Anchor::Bottom | Anchor::Left),
+        WindowAnchor::Top => (Anchor::Top | Anchor::Left | Anchor::Right, Anchor::Top | Anchor::Left),
+    };
+
     if app.config.width == 0 {
-        layer_surface.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer_surface.set_anchor(anchor_full);
         layer_surface.set_size(0, height);
     } else {
-        layer_surface.set_anchor(Anchor::Top | Anchor::Left);
+        layer_surface.set_anchor(anchor_left);
         layer_surface.set_size(app.config.width, height);
     }
 
@@ -194,14 +197,14 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
     }
 
     let _keyboard = seat.get_keyboard(&qh, ());
-    let _pointer = seat.get_pointer(&qh, ()); // 新增：获取鼠标指针
+    let _pointer = seat.get_pointer(&qh, ());
 
     loop {
         if let Some(code) = app.state.exit_code {
             if code == 0 {
                 let text = app.state.output.clone().unwrap_or_default();
-                let idx = app.state.selected_original_idx.unwrap_or(usize::MAX);
-                return Ok(Some((idx, text)));
+                let indices = app.state.output_indices.clone();
+                return Ok(Some((indices, text)));
             }
             return Ok(None);
         }
@@ -247,7 +250,6 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(usize, Stri
                         surface.attach(Some(&slot.buffer), 0, 0);
                         surface.damage(0, 0, w, h);
 
-                        // 新增：每次 commit 前强调逻辑尺寸，确保合成器正确缩放
                         if let Some(viewport) = &app.viewport {
                             viewport.set_destination(app.logical_width, app.logical_height);
                         }
@@ -290,7 +292,7 @@ fn create_shm_buffer(app: &mut App, qh: &QueueHandle<App>, width: i32, height: i
     let shm = ShmBuffer { ptr, size, _fd: fd };
 
     let pool = app.shm.create_pool(shm._fd.as_fd(), size as i32, qh, ());
-    let buffer = pool.create_buffer(0, width, height, stride, wayland_client::protocol::wl_shm::Format::Xrgb8888, qh, idx);
+    let buffer = pool.create_buffer(0, width, height, stride, wayland_client::protocol::wl_shm::Format::Argb8888, qh, idx);
     pool.destroy();
 
     app.buffers[idx] = Some(BufferSlot {
@@ -356,7 +358,6 @@ impl Dispatch<ZwpTextInputV3, ()> for App {
     }
 }
 
-// 新增：处理分数缩放事件
 impl Dispatch<WpFractionalScaleManagerV1, ()> for App { fn event(_: &mut Self, _: &WpFractionalScaleManagerV1, _: <WpFractionalScaleManagerV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<WpFractionalScaleV1, ()> for App {
     fn event(state: &mut Self, _proxy: &WpFractionalScaleV1, event: <WpFractionalScaleV1 as wayland_client::Proxy>::Event, _data: &(), _conn: &Connection, _qh: &QueueHandle<Self>) {
@@ -365,10 +366,8 @@ impl Dispatch<WpFractionalScaleV1, ()> for App {
             if state.fractional_scale != scale {
                 state.fractional_scale = scale;
                 let scale_f = scale as f32 / 120.0;
-                // 根据逻辑尺寸重新计算物理尺寸
                 state.width = ((state.logical_width as f32 * scale_f).round() as i32).max(1);
                 state.height = ((state.logical_height as f32 * scale_f).round() as i32).max(1);
-                // 强制销毁旧 Buffer，主循环会重新分配
                 for i in 0..2 {
                     state.buffers[i] = None;
                 }
@@ -378,7 +377,6 @@ impl Dispatch<WpFractionalScaleV1, ()> for App {
     }
 }
 
-// 新增：处理视口协议事件
 impl Dispatch<WpViewporter, ()> for App { fn event(_: &mut Self, _: &WpViewporter, _: <WpViewporter as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<WpViewport, ()> for App { fn event(_: &mut Self, _: &WpViewport, _: <WpViewport as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 
@@ -397,9 +395,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                 let phys_font_size = state.config.font_size * scale;
                 let base_phys_line_h = state.renderer
                     .measure_line_height(phys_font_size, &state.config.font);
-                // 加上和渲染时一样的 6.0 * scale 行间距
                 let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as i32;
-                let visible_count = (state.config.lines as usize).min(state.state.items.len());
+                let visible_count = if state.config.password { 0 } else { (state.config.lines as usize).min(state.state.items.len()) };
                 let line_count = (visible_count + 1) as i32;
                 let phys_h = line_count * phys_line_h;
                 let log_h = (phys_h as f32 / scale).ceil() as i32;
@@ -483,14 +480,12 @@ impl Dispatch<WlKeyboard, ()> for App {
                         1  => { state.state.cancel(); return; }      // Esc
                         14 => { state.state.backspace(); return; }   // Bksp
                         15 => {
-                            // Tab：只有在开启多选模式时才标记
                             if state.config.multi_select {
                                 state.state.toggle_mark();
                             }
                             return;
                         }
                         28 => {
-                            // Enter：传入是否多选模式
                             state.state.select_current(state.config.multi_select);
                             return;
                         }
@@ -516,31 +511,29 @@ impl Dispatch<WlPointer, ()> for App {
         use wl_pointer::Event;
         match event {
             Event::Enter { surface_y, .. } | Event::Motion { surface_y, .. } => {
-                state.pointer_y = surface_y; // 记录最新的鼠标 Y 坐标
+                state.pointer_y = surface_y;
             }
             Event::Button { button, state: btn_state, .. } => {
                 if btn_state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) {
-                    if button == 0x110 { // 0x110 = BTN_LEFT (左键)
+                    if button == 0x110 { // BTN_LEFT
                         let scale = state.fractional_scale as f32 / 120.0;
                         let phys_font_size = state.config.font_size * scale;
                         let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
                         let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as f32;
 
                         if phys_line_h > 0.0 {
-                            // 因为使用了 viewport，鼠标传入的是逻辑坐标，我们要除以逻辑行高
                             let logical_line_h = phys_line_h / scale;
                             let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
 
-                            if clicked_row >= 1 { // 0 是输入框，>=1 是列表项
-                                let target_idx = state.state.scroll_offset + clicked_row - 1;
+                            if clicked_row >= 1 {
+                                let target_idx = state.state.scroll_offset + clicked_row.saturating_sub(1);
                                 if target_idx < state.state.filtered_items.len() {
                                     state.state.selected_idx = target_idx;
                                     state.state.select_current(state.config.multi_select);
                                 }
                             }
                         }
-                    } else if button == 0x111 { // 0x111 = BTN_RIGHT (右键)
-                        // 右键多选逻辑 (仅在 -m 模式下生效)
+                    } else if button == 0x111 { // BTN_RIGHT
                         if state.config.multi_select {
                             let scale = state.fractional_scale as f32 / 120.0;
                             let phys_font_size = state.config.font_size * scale;
@@ -552,7 +545,7 @@ impl Dispatch<WlPointer, ()> for App {
                                 let clicked_row = (state.pointer_y / logical_line_h as f64).floor() as usize;
 
                                 if clicked_row >= 1 {
-                                    let target_idx = state.state.scroll_offset + clicked_row - 1;
+                                    let target_idx = state.state.scroll_offset + clicked_row.saturating_sub(1);
                                     if target_idx < state.state.filtered_items.len() {
                                         state.state.selected_idx = target_idx;
                                         state.state.toggle_mark();
@@ -565,35 +558,25 @@ impl Dispatch<WlPointer, ()> for App {
             }
             Event::AxisValue120 { axis, value120, .. } => {
                 if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
-                    // value120 通常为 120 或 -120
                     let steps = (value120 / 120).abs() as usize;
-                    let lines_per_step = 3; // 每格滚动 3 行
+                    let lines_per_step = 3;
 
                     if value120 > 0 {
-                        for _ in 0..(steps * lines_per_step) {
-                            state.state.move_down();
-                        }
+                        state.state.move_down_by(steps * lines_per_step);
                     } else if value120 < 0 {
-                        for _ in 0..(steps * lines_per_step) {
-                            state.state.move_up();
-                        }
+                        state.state.move_up_by(steps * lines_per_step);
                     }
                 }
             }
-            // 保留旧的 Axis 事件作为兼容（某些老设备/触控板可能不发 120 信号）
             Event::Axis { axis, value, .. } => {
                 if axis == wayland_client::WEnum::Value(wl_pointer::Axis::VerticalScroll) {
                     state.axis_accumulator += value;
                     let threshold = 15.0;
                     if state.axis_accumulator > threshold {
-                        state.state.move_down();
-                        state.state.move_down();
-                        state.state.move_down(); // 同样改为 3 行
+                        state.state.move_down_by(3);
                         state.axis_accumulator = 0.0;
                     } else if state.axis_accumulator < -threshold {
-                        state.state.move_up();
-                        state.state.move_up();
-                        state.state.move_up(); // 3 行
+                        state.state.move_up_by(3);
                         state.axis_accumulator = 0.0;
                     }
                 }

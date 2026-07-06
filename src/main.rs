@@ -9,17 +9,18 @@ mod render;
 mod state;
 mod wayland;
 
-use config::Config;
+use std::io::IsTerminal;
+use config::{Config, WindowAnchor};
 
 #[derive(Parser, Debug)]
 #[command(name = "lok", about = "CJK-optimized Wayland menu tool")]
 struct Cli {
     /// 提示符前缀
-    #[arg(short, long, default_value = "")]
+    #[arg(short = 'p', long, default_value = "")]
     prompt: String,
 
     /// 输出选中项的序号而非内容
-    #[arg(short, long)]
+    #[arg(short = 'i', long)]
     output_index: bool,
 
     /// 垂直显示的行数 (0 表示按条目数自适应，最大20)
@@ -34,12 +35,20 @@ struct Cli {
     #[arg(short = '0', long)]
     null: bool,
 
+    /// 密码输入模式 (隐藏输入内容，不显示列表)
+    #[arg(short = 'P', long)]
+    password: bool,
+
+    /// 窗口垂直位置
+    #[arg(long, value_enum, default_value_t = WindowAnchor::Top)]
+    anchor: WindowAnchor,
+
     /// 窗口宽度 (0 表示铺满屏幕宽度)
     #[arg(short = 'W', long, default_value_t = 0)]
     width: u32,
 
     /// 字体大小
-    #[arg(short, long, default_value_t = 14.0)]
+    #[arg(short = 's', long, default_value_t = 14.0)]
     font_size: f32,
 
     /// 字体名称 (留空则使用系统默认字体)
@@ -47,7 +56,7 @@ struct Cli {
     font: String,
 
     /// 背景颜色
-    #[arg(long, default_value = "#141522")]
+    #[arg(short = 'b', long, default_value = "#141522")]
     bg: String,
 
     /// 普通文字颜色
@@ -107,15 +116,15 @@ fn main() {
     let cli = Cli::parse();
 
     let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
+    // 如果 stdin 不是终端（说明有管道数据传过来），则读取数据
+    // 如果是终端（直接运行程序），则跳过读取，避免阻塞卡死
+    if !io::stdin().is_terminal() {
+        io::stdin().read_to_string(&mut input).unwrap();
+    }
 
     // 鲁棒性修复：限制最大读取条目数，防止 OOM
     const MAX_ITEMS: usize = 100_000;
     let items: Vec<String> = input.lines().take(MAX_ITEMS).map(|s| s.to_string()).collect();
-
-    if items.is_empty() {
-        std::process::exit(2);
-    }
 
     let lines = if cli.lines == 0 {
         items.len().min(20) as u32
@@ -139,14 +148,24 @@ fn main() {
         prompt_fg: parse_color(&cli.prompt_fg),
         multi_select: cli.multi_select,
         null: cli.null,
+        password: cli.password,    // 新增
+        anchor: cli.anchor,        // 新增
     };
 
     match wayland::run(items, config) {
-        Ok(Some((idx, text))) => {
-            if cli.output_index && idx != usize::MAX {
-                println!("{}", idx);
+        Ok(Some((indices, text))) => {
+            if cli.output_index {
+                if !indices.is_empty() {
+                    let sep = if cli.null { "\0" } else { "\n" };
+                    let out: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
+                    print!("{}", out.join(sep));
+                    if !cli.null { println!(); }
+                }
             } else {
-                println!("{}", text);
+                print!("{}", text);
+                if !text.ends_with('\n') && !text.ends_with('\0') {
+                    println!();
+                }
             }
             std::process::exit(0);
         }

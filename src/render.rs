@@ -95,71 +95,80 @@ impl Renderer {
         let line_h = base_line_h + 6.0 * scale; // 增加 6 逻辑像素的行间距
         let metrics = Metrics::new(font_size, line_h);
 
-        let (bg_r, bg_g, bg_b) = extract_rgb(config.bg);
-        let (fg_r, fg_g, fg_b) = extract_rgb(config.fg);
-        let (sbg_r, sbg_g, sbg_b) = extract_rgb(config.sbg);
-        let (sfg_r, sfg_g, sfg_b) = extract_rgb(config.sfg);
-        let (hfg_r, hfg_g, hfg_b) = extract_rgb(config.hfg);
-        let (pbg_r, pbg_g, pbg_b) = extract_rgb(config.prompt_bg);
-        let (pfg_r, pfg_g, pfg_b) = extract_rgb(config.prompt_fg);
+        let (bg_r, bg_g, bg_b, bg_a) = extract_rgba(config.bg);
+        let (fg_r, fg_g, fg_b, _) = extract_rgba(config.fg);
+        let (sbg_r, sbg_g, sbg_b, sbg_a) = extract_rgba(config.sbg);
+        let (sfg_r, sfg_g, sfg_b, _) = extract_rgba(config.sfg);
+        let (hfg_r, hfg_g, hfg_b, _) = extract_rgba(config.hfg);
+        let (pbg_r, pbg_g, pbg_b, pbg_a) = extract_rgba(config.prompt_bg);
+        let (pfg_r, pfg_g, pfg_b, _) = extract_rgba(config.prompt_fg);
 
-        let bg_pixel = [bg_b, bg_g, bg_r, 0xFF];
+        let bg_pixel = [bg_b, bg_g, bg_r, bg_a]; // 使用带透明度的像素
         for chunk in pixels.chunks_exact_mut(4) {
             chunk.copy_from_slice(&bg_pixel);
         }
 
         let mut lines: Vec<LineInfo> = Vec::new();
-        // 在末尾加上光标指示符
-        let cursor = "│";
+
+        // 密码模式下，用星号代替输入内容
+        let display_query = if config.password {
+            "*".repeat(state.query.chars().count())
+        } else {
+            state.query.clone()
+        };
+
         lines.push(LineInfo {
-            text: format!("{}{}{}", config.prompt, state.query, state.preedit),
-            // 如果有预编辑(中文输入中)不显示光标，否则显示
+            text: format!("{}{}{}", config.prompt, display_query, state.preedit),
             is_selected: false,
             is_marked: false,
             highlights: Vec::new(),
         });
 
-        // 如果没有在输入中文预编辑，在第一行文本末尾追加光标
-        if state.preedit.is_empty() {
-            if let Some(first_line) = lines.get_mut(0) {
-                first_line.text.push_str(cursor);
+        // 非密码模式才渲染列表
+        if !config.password {
+            if state.filtered_items.is_empty() {
+                // 没有匹配项时，直接显示输入框内容
+                lines.push(LineInfo {
+                    text: state.query.clone(),
+                    is_selected: true,
+                    is_marked: false,
+                    highlights: Vec::new(),
+                });
+            } else {
+                let max_chars = ((width as f32 / (font_size * 0.65)) as usize).max(10);
+                let visible_end = state.scroll_offset + config.lines as usize;
+
+                for i in state.scroll_offset..visible_end.min(state.filtered_items.len()) {
+                    let orig_idx = state.filtered_items[i];
+                    let item_str = &state.items[orig_idx];
+
+                    let display_item: String = if item_str.chars().count() > max_chars {
+                        let mut s: String = item_str.chars().take(max_chars).collect();
+                        s.push_str("...");
+                        s
+                    } else {
+                        item_str.clone()
+                    };
+
+                    let is_selected = i == state.selected_idx;
+                    let is_marked = state.marked_items.contains(&orig_idx);
+                    let highlights = state.highlights.get(i).cloned().unwrap_or_default();
+
+                    lines.push(LineInfo {
+                        text: display_item,
+                        is_selected,
+                        is_marked,
+                        highlights,
+                    });
+                }
             }
         }
 
-        if state.filtered_items.is_empty() {
-            // 没有匹配项时，直接显示输入框内容
-            lines.push(LineInfo {
-                text: state.query.clone(),
-                is_selected: true,
-                is_marked: false,
-                highlights: Vec::new(),
-            });
-        } else {
-            let max_chars = ((width as f32 / (font_size * 0.65)) as usize).max(10);
-            let visible_end = state.scroll_offset + config.lines as usize;
-
-            for i in state.scroll_offset..visible_end.min(state.filtered_items.len()) {
-                let orig_idx = state.filtered_items[i];
-                let item_str = &state.items[orig_idx];
-
-                let display_item: String = if item_str.chars().count() > max_chars {
-                    let mut s: String = item_str.chars().take(max_chars).collect();
-                    s.push_str("...");
-                    s
-                } else {
-                    item_str.clone()
-                };
-
-                let is_selected = i == state.selected_idx;
-                let is_marked = state.marked_items.contains(&orig_idx); // 新增
-                let highlights = state.highlights.get(i).cloned().unwrap_or_default();
-
-                lines.push(LineInfo {
-                    text: display_item,
-                    is_selected,
-                    is_marked,
-                    highlights,
-                });
+        // 如果没有在输入中文预编辑，在第一行文本末尾追加光标
+        let cursor = "│";
+        if state.preedit.is_empty() {
+            if let Some(first_line) = lines.get_mut(0) {
+                first_line.text.push_str(cursor);
             }
         }
 
@@ -188,7 +197,6 @@ impl Renderer {
                     }
                     self.font_checked = true;
                 }
-                // 将用户指定的字体插入到最高优先级
                 attrs = attrs.family(Family::Name(&config.font));
             }
 
@@ -203,7 +211,6 @@ impl Renderer {
 
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
-        // 使用我们测量的实际高度绘制背景，不依赖 run.line_height
         let actual_rect_h = line_h.ceil() as i32;
 
         for (i, run) in runs.iter().enumerate() {
@@ -211,20 +218,18 @@ impl Renderer {
             let y_top = run.line_top.floor() as i32;
 
             if i == 0 {
-                fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, pbg_r, pbg_g, pbg_b);
+                fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, pbg_r, pbg_g, pbg_b, pbg_a);
             } else {
-                // 画选中或标记的背景
                 if lines[i].is_selected {
-                    fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, sbg_r, sbg_g, sbg_b);
+                    fill_rect(pixels, stride, width, height, 0, y_top, width, actual_rect_h, sbg_r, sbg_g, sbg_b, sbg_a);
                 }
 
-                // 画左侧指示条：被标记用红色(hfg)，仅被选中用亮白色
                 if lines[i].is_marked {
                     let line_width = (3.0 * scale).round() as i32;
-                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, hfg_r, hfg_g, hfg_b);
+                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, hfg_r, hfg_g, hfg_b, 255);
                 } else if lines[i].is_selected {
                     let line_width = (3.0 * scale).round() as i32;
-                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, sfg_r, sfg_g, sfg_b);
+                    fill_rect(pixels, stride, width, height, 0, y_top, line_width, actual_rect_h, sfg_r, sfg_g, sfg_b, 255);
                 }
             }
         }
@@ -237,8 +242,8 @@ impl Renderer {
                 let physical = glyph.physical((0.0, run.line_y), scale);
                 if let Some(image) = self.swash_cache.get_image(&mut self.font_system, physical.cache_key) {
                     let placement = image.placement;
-                    let left_padding = (8.0 * scale).round() as i32; // 新增：文字左侧留出 8 像素
-                    let px = physical.x + placement.left + left_padding; // 修改这里
+                    let left_padding = (8.0 * scale).round() as i32;
+                    let px = physical.x + placement.left + left_padding;
                     let py = physical.y - placement.top;
 
                     let char_idx = line_info.text.get(..glyph.start)
@@ -256,16 +261,14 @@ impl Renderer {
                         (fg_r, fg_g, fg_b)
                     };
 
-                    for yy in 0..placement.height as i32 {
-                        for xx in 0..placement.width as i32 {
-                            let target_x = px + xx;
-                            let target_y = py + yy;
-
-                            if target_x >= 0 && target_x < width && target_y >= 0 && target_y < height {
-                                let buf_idx = (target_y * stride + target_x * 4) as usize;
-
-                                match image.content {
-                                    SwashContent::Mask => {
+                    match image.content {
+                        SwashContent::Mask => {
+                            for yy in 0..placement.height as i32 {
+                                for xx in 0..placement.width as i32 {
+                                    let target_x = px + xx;
+                                    let target_y = py + yy;
+                                    if target_x >= 0 && target_x < width && target_y >= 0 && target_y < height {
+                                        let buf_idx = (target_y * stride + target_x * 4) as usize;
                                         let img_idx = yy as usize * placement.width as usize + xx as usize;
                                         if img_idx < image.data.len() {
                                             let alpha = image.data[img_idx];
@@ -274,7 +277,16 @@ impl Renderer {
                                             }
                                         }
                                     }
-                                    SwashContent::Color => {
+                                }
+                            }
+                        }
+                        SwashContent::Color => {
+                            for yy in 0..placement.height as i32 {
+                                for xx in 0..placement.width as i32 {
+                                    let target_x = px + xx;
+                                    let target_y = py + yy;
+                                    if target_x >= 0 && target_x < width && target_y >= 0 && target_y < height {
+                                        let buf_idx = (target_y * stride + target_x * 4) as usize;
                                         let img_idx = (yy as usize * placement.width as usize + xx as usize) * 4;
                                         if img_idx + 3 < image.data.len() {
                                             let a = image.data[img_idx + 3];
@@ -286,7 +298,16 @@ impl Renderer {
                                             }
                                         }
                                     }
-                                    SwashContent::SubpixelMask => {
+                                }
+                            }
+                        }
+                        SwashContent::SubpixelMask => {
+                            for yy in 0..placement.height as i32 {
+                                for xx in 0..placement.width as i32 {
+                                    let target_x = px + xx;
+                                    let target_y = py + yy;
+                                    if target_x >= 0 && target_x < width && target_y >= 0 && target_y < height {
+                                        let buf_idx = (target_y * stride + target_x * 4) as usize;
                                         let img_idx = (yy as usize * placement.width as usize + xx as usize) * 3;
                                         if img_idx + 2 < image.data.len() {
                                             let a = image.data[img_idx].max(image.data[img_idx + 1]).max(image.data[img_idx + 2]);
@@ -305,8 +326,8 @@ impl Renderer {
     }
 }
 
-fn extract_rgb(c: u32) -> (u8, u8, u8) {
-    ((c >> 16 & 0xFF) as u8, (c >> 8 & 0xFF) as u8, (c & 0xFF) as u8)
+fn extract_rgba(c: u32) -> (u8, u8, u8, u8) {
+    (((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8, ((c >> 24) & 0xFF) as u8)
 }
 
 fn blend_pixel_fast(pixels: &mut [u8], idx: usize, r: u8, g: u8, b: u8, alpha: u8) {
@@ -315,14 +336,23 @@ fn blend_pixel_fast(pixels: &mut [u8], idx: usize, r: u8, g: u8, b: u8, alpha: u
     let bg_b = pixels[idx] as u32;
     let bg_g = pixels[idx + 1] as u32;
     let bg_r = pixels[idx + 2] as u32;
+    let bg_a = pixels[idx + 3] as u32;
 
-    pixels[idx]     = ((bg_b * inv_alpha + b as u32 * a) / 255) as u8;
-    pixels[idx + 1] = ((bg_g * inv_alpha + g as u32 * a) / 255) as u8;
-    pixels[idx + 2] = ((bg_r * inv_alpha + r as u32 * a) / 255) as u8;
-    pixels[idx + 3] = 255;
+    let out_a = a + (bg_a * inv_alpha) / 255;
+    if out_a > 0 {
+        pixels[idx]     = ((bg_b * inv_alpha + b as u32 * a) / out_a) as u8;
+        pixels[idx + 1] = ((bg_g * inv_alpha + g as u32 * a) / out_a) as u8;
+        pixels[idx + 2] = ((bg_r * inv_alpha + r as u32 * a) / out_a) as u8;
+        pixels[idx + 3] = out_a as u8;
+    } else {
+        pixels[idx] = 0;
+        pixels[idx + 1] = 0;
+        pixels[idx + 2] = 0;
+        pixels[idx + 3] = 0;
+    }
 }
 
-fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8) {
+fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8, a: u8) {
     let x_start = x.max(0);
     let x_end = (x + w).min(buf_w);
     let y_start = y.max(0);
@@ -331,12 +361,14 @@ fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: 
     if x_start >= x_end || y_start >= y_end { return; }
 
     let row_len = (x_end - x_start) as usize * 4;
-    let color_pixel = [b, g, r, 0xFF];
+    let color_pixel = [b, g, r, a];
+
+    // 构造一整行像素数据
+    let row: Vec<u8> = color_pixel.iter().copied().cycle().take(row_len).collect();
 
     for py in y_start..y_end {
         let start_idx = (py * stride + x_start * 4) as usize;
-        for chunk in pixels[start_idx..start_idx + row_len].chunks_exact_mut(4) {
-            chunk.copy_from_slice(&color_pixel);
-        }
+        // 按行一次性拷贝
+        pixels[start_idx..start_idx + row_len].copy_from_slice(&row);
     }
 }

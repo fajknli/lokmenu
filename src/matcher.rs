@@ -6,7 +6,6 @@ pub struct MatchResult {
     pub highlight_indices: Vec<usize>,
 }
 
-// 修改：接收 pinyin_cache 参数
 pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) -> Vec<MatchResult> {
     if query.is_empty() {
         return items
@@ -23,7 +22,6 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
     let mut results = Vec::new();
 
     for (idx, item) in items.iter().enumerate() {
-        // 优先级 1: 原文 Fuzzy 匹配 (带高亮)
         if let Some(res) = fuzzy_match(item, query) {
             results.push(MatchResult {
                 original_idx: idx,
@@ -33,8 +31,8 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
             continue;
         }
 
-        // 优先级 2: 拼音匹配 (使用缓存数据)
         let (full, initials) = &pinyin_cache[idx];
+        // 优化：直接传 query，fuzzy_match 内部已经用 eq_ignore_ascii_case 处理了大小写
         if let Some(res) = match_pinyin_cached(full, initials, query) {
             results.push(MatchResult {
                 original_idx: idx,
@@ -44,12 +42,11 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
         }
     }
 
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_unstable_by(|a, b| b.score.cmp(&a.score));
     results
 }
 
 pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
-    let text_chars: Vec<char> = text.chars().collect();
     let query_chars: Vec<char> = query.chars().collect();
 
     let mut text_idx = 0;
@@ -57,17 +54,18 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
     let mut highlights = Vec::new();
     let mut score = 0;
 
-    while text_idx < text_chars.len() && query_idx < query_chars.len() {
-        if text_chars[text_idx].eq_ignore_ascii_case(&query_chars[query_idx]) {
-            // 连续匹配奖励
+    // 优化：直接遍历字符，不分配 Vec<char>
+    for c in text.chars() {
+        if query_idx >= query_chars.len() { break; }
+
+        if c.eq_ignore_ascii_case(&query_chars[query_idx]) {
             if !highlights.is_empty() && highlights.last() == Some(&(text_idx - 1)) {
                 score += 20;
             } else {
                 score += 10;
             }
 
-            // 新增：如果大小写完全一致，额外加分
-            if text_chars[text_idx] == query_chars[query_idx] {
+            if c == query_chars[query_idx] {
                 score += 5;
             }
 
@@ -84,18 +82,15 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<(i32, Vec<usize>)> {
     }
 }
 
-// 新增：基于缓存的拼音匹配函数
 fn match_pinyin_cached(full: &str, initials: &str, query: &str) -> Option<(i32, Vec<usize>)> {
-    let q = query.to_lowercase();
-
     if !initials.is_empty() {
-        if let Some(res) = fuzzy_match(initials, &q) {
+        if let Some(res) = fuzzy_match(initials, query) {
             return Some((res.0 - 10, res.1));
         }
     }
 
     if !full.is_empty() {
-        if let Some(res) = fuzzy_match(full, &q) {
+        if let Some(res) = fuzzy_match(full, query) {
             return Some((res.0 - 20, res.1));
         }
     }

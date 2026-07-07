@@ -61,27 +61,43 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
 }
 
 pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
-    let mut text_idx = 0;
-    let mut query_idx = 0;
+    let mut text_idx: usize = 0;
+    let mut query_idx: usize = 0;
     let mut highlights = Vec::new();
-    let mut score = 0;
+    let mut score: i32 = 0;
+    let mut prev_char: Option<char> = None;
 
     for c in text.chars() {
         if query_idx >= q_chars.len() { break; }
 
         if c.eq_ignore_ascii_case(&q_chars[query_idx]) {
-            if matches!(highlights.last(), Some(&h) if h + 1 == text_idx) {
-
-                score += 20;
+            // 1. 连续性
+            if highlights.is_empty() {
+                // 首个匹配，无连续/断开概念
+            } else if matches!(highlights.last(), Some(&h) if h + 1 == text_idx) {
+                score += 20; // 连续奖励
             } else {
-                score += 10;
+                score -= 10; // 断开惩罚
             }
+
+            // 2. 大小写精确
             if c == q_chars[query_idx] {
                 score += 5;
             }
+
+            // 3. 边界奖励：路径分隔符、单词分隔符之后的首字符
+            let is_boundary = text_idx == 0 || matches!(
+                prev_char,
+                Some('/' | '\\' | '-' | '_' | '.' | ' ')
+            );
+            if is_boundary {
+                score += 30;
+            }
+
             highlights.push(text_idx);
             query_idx += 1;
         }
+        prev_char = Some(c);
         text_idx += 1;
     }
 

@@ -87,7 +87,7 @@ impl Renderer {
         line_h
     }
 
-    pub fn draw_frame(&mut self, pixels: &mut [u8], width: i32, height: i32, scale: f32, state: &State, config: &Config) {
+    pub fn draw_frame(&mut self, pixels: &mut [u8], width: i32, height: i32, scale: f32, state: &State, config: &Config) -> Option<(i32, i32)> {
         let stride = width * 4;
         let font_size = config.font_size * scale;
 
@@ -373,25 +373,27 @@ impl Renderer {
                 let y_top = prompt_run.line_top.floor() as i32;
                 let cursor_w = (2.0 * scale).round() as i32;
 
-                // 高度取字体高度的 75%，上下留空
                 let cursor_h = (base_line_h * 0.95).round() as i32;
                 let cursor_y = y_top + ((actual_rect_h - cursor_h) / 2).max(0);
 
                 let (cr, cg, cb) = (pfg_r, pfg_g, pfg_b);
 
-                // 定位：紧跟最后一个字形后面
                 let cursor_x = match prompt_run.glyphs.last() {
                     Some(last_glyph) => {
                         let phys = last_glyph.physical((0.0, prompt_run.line_y), scale);
-                        // 字符光标间距
                         phys.x + (last_glyph.w * scale).round() as i32 + left_padding + 2
                     }
-                    None => left_padding, // 空输入框，光标在左侧 padding 处
+                    None => left_padding,
                 };
 
                 fill_rect(pixels, stride, width, height, cursor_x, cursor_y, cursor_w, cursor_h, cr, cg, cb, 255);
+
+                // 新增：返回光标的物理坐标
+                return Some((cursor_x, cursor_y));
             }
         }
+
+        None // 新增：如果没有画光标，返回 None
     }
 }
 
@@ -430,15 +432,16 @@ fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: 
     if x_start >= x_end || y_start >= y_end { return; }
 
     let row_len = (x_end - x_start) as usize * 4;
+    let start_x_byte = x_start * 4;
     let color_pixel = [b, g, r, a];
 
-    // 构造一整行像素数据
-    let row: Vec<u8> = color_pixel.iter().copied().cycle().take(row_len).collect();
-
+    // 使用 chunks_exact_mut 直接按像素填充，零分配
     for py in y_start..y_end {
-        let start_idx = (py * stride + x_start * 4) as usize;
-        // 按行一次性拷贝
-        pixels[start_idx..start_idx + row_len].copy_from_slice(&row);
+        let start_idx = (py * stride + start_x_byte) as usize;
+        let row_slice = &mut pixels[start_idx..start_idx + row_len];
+        for chunk in row_slice.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&color_pixel);
+        }
     }
 }
 

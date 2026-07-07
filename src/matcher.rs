@@ -1,11 +1,49 @@
 // src/matcher.rs
 
+use std::cell::RefCell;
+
 const MAX_MATCHES: usize = 500;
 
 pub struct MatchResult {
     pub original_idx: usize,
     pub score: i32,
     pub highlight_indices: Vec<usize>,
+}
+
+// 线程局部内存池：避免每次匹配时的 Vec 堆分配
+thread_local! {
+    static FUZZY_BUF: RefCell<FuzzyBuffers> = RefCell::new(FuzzyBuffers::new());
+}
+
+struct FuzzyBuffers {
+    tchars: Vec<char>,
+    dp_prev: Vec<i32>,
+    dp_cur: Vec<i32>,
+    par: Vec<Vec<usize>>,
+}
+
+impl FuzzyBuffers {
+    fn new() -> Self {
+        Self {
+            tchars: Vec::with_capacity(256),
+            dp_prev: Vec::with_capacity(256),
+            dp_cur: Vec::with_capacity(256),
+            par: Vec::with_capacity(32),
+        }
+    }
+}
+
+// 快速排斥：检查 query 的所有字符是否都在 text 中按序存在
+fn quick_contains(text: &str, q_chars: &[char]) -> bool {
+    if q_chars.is_empty() { return true; }
+    let mut qi = 0;
+    for c in text.chars() {
+        if c.eq_ignore_ascii_case(&q_chars[qi]) {
+            qi += 1;
+            if qi == q_chars.len() { return true; }
+        }
+    }
+    false
 }
 
 pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) -> Vec<MatchResult> {
@@ -61,51 +99,127 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
 }
 
 pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
-    let mut text_idx: usize = 0;
-    let mut query_idx: usize = 0;
-    let mut highlights = Vec::new();
-    let mut score: i32 = 0;
-    let mut prev_char: Option<char> = None;
+    let qlen = q_chars.len();
+    if qlen == 0 { return Some((0, Vec::new())); }
 
-    for c in text.chars() {
-        if query_idx >= q_chars.len() { break; }
+    // 1. 快速排斥：如果连子序列都不是，直接跳过，避免分配任何 DP 内存
+    if !quick_contains(text, q_chars) {
+        return None;
+    }
 
-        if c.eq_ignore_ascii_case(&q_chars[query_idx]) {
-            // 1. 连续性
-            if highlights.is_empty() {
-                // 首个匹配，无连续/断开概念
-            } else if matches!(highlights.last(), Some(&h) if h + 1 == text_idx) {
-                score += 20; // 连续奖励
-            } else {
-                score -= 10; // 断开惩罚
-            }
+    FUZZY_BUF.with(|buf_cell| {
+        let mut buf = buf_cell.borrow_mut();
 
-            // 2. 大小写精确
-            if c == q_chars[query_idx] {
-                score += 5;
-            }
+        // 解构借用，允许同时可变借用不同字段
+        let FuzzyBuffers { tchars, dp_prev, dp_cur, par } = &mut *buf;
 
-            // 3. 边界奖励：路径分隔符、单词分隔符之后的首字符
-            let is_boundary = text_idx == 0 || matches!(
-                prev_char,
-                Some('/' | '\\' | '-' | '_' | '.' | ' ')
-            );
-            if is_boundary {
-                score += 30;
-            }
+        // 2. 复用内存池，仅清理和重置长度，不重新分配堆内存
+        tchars.clear();
+        tchars.extend(text.chars());
+        let tlen = tchars.len();
 
-            highlights.push(text_idx);
-            query_idx += 1;
+        if qlen > tlen { return None; }
+
+        dp_prev.clear();
+        dp_prev.resize(tlen, i32::MIN);
+        dp_cur.clear();
+        dp_cur.resize(tlen, i32::MIN);
+
+        if par.len() < qlen {
+            par.resize_with(qlen, Vec::new);
         }
-        prev_char = Some(c);
-        text_idx += 1;
-    }
+        for i in 0..qlen {
+            par[i].clear();
+            par[i].resize(tlen, usize::MAX);
+        }
 
-    if query_idx == q_chars.len() {
-        Some((score, highlights))
-    } else {
-        None
-    }
+        let boundary_bonus = |ti: usize| -> i32 {
+            if ti == 0 || matches!(tchars[ti - 1], '/' | '\\' | '-' | '_' | '.' | ' ') {
+                30
+            } else {
+                0
+            }
+        };
+
+        // 初始化 qi = 0
+        for ti in 0..tlen {
+            if tchars[ti].eq_ignore_ascii_case(&q_chars[0]) {
+                let mut s = 10i32;
+                if tchars[ti] == q_chars[0] { s += 5; }
+                s += boundary_bonus(ti);
+                dp_prev[ti] = s;
+            }
+        }
+
+        // 3. DP 递推求全局最优解
+        for qi in 1..qlen {
+            dp_cur.iter_mut().for_each(|x| *x = i32::MIN);
+
+            let mut best_nc = i32::MIN;
+            let mut best_nc_idx = usize::MAX;
+
+            for ti in 0..tlen {
+                // 维护滑动窗口：max(dp[qi-1][0..ti-2])
+                if ti >= 2 && dp_prev[ti - 2] > i32::MIN {
+                    if dp_prev[ti - 2] > best_nc {
+                        best_nc = dp_prev[ti - 2];
+                        best_nc_idx = ti - 2;
+                    }
+                }
+
+                if !tchars[ti].eq_ignore_ascii_case(&q_chars[qi]) {
+                    continue;
+                }
+
+                let mut best = i32::MIN;
+                let mut best_p = usize::MAX;
+
+                // 选择 1：从 ti-1 连续接过来
+                if ti >= 1 && dp_prev[ti - 1] > i32::MIN {
+                    let s = dp_prev[ti - 1] + 20;
+                    if s > best { best = s; best_p = ti - 1; }
+                }
+
+                // 选择 2：从更早的位置跳过来（有断点）
+                if best_nc > i32::MIN {
+                    let s = best_nc - 10;
+                    if s > best { best = s; best_p = best_nc_idx; }
+                }
+
+                if best > i32::MIN {
+                    if tchars[ti] == q_chars[qi] { best += 5; }
+                    best += boundary_bonus(ti);
+                    dp_cur[ti] = best;
+                    par[qi][ti] = best_p;
+                }
+            }
+            std::mem::swap(dp_prev, dp_cur);
+        }
+
+        // 找最优终点
+        let last = qlen - 1;
+        let mut best_score = i32::MIN;
+        let mut best_end = usize::MAX;
+        for ti in 0..tlen {
+            // 注意：因为上面 swap 了，所以最后一层的结果在 dp_prev 里
+            if dp_prev[ti] > best_score {
+                best_score = dp_prev[ti];
+                best_end = ti;
+            }
+        }
+        if best_end == usize::MAX { return None; }
+
+        // 回溯还原匹配位置
+        let mut highlights = vec![best_end];
+        let mut ti = best_end;
+        for qi in (1..=last).rev() {
+            ti = par[qi][ti];
+            highlights.push(ti);
+        }
+        highlights.reverse();
+
+        Some((best_score, highlights))
+    })
 }
 
 fn match_pinyin_cached(full: &str, initials: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {

@@ -1,7 +1,3 @@
-# 铺满（兼容原有行为）
-echo -e "aaa\nbbb\nccc" | lokmenu -p "全宽: "
-echo -e "aaa\nbbb\nccc" | lokmenu -p "全宽底: " --anchor bottom
-
 # 左上角，固定宽度
 echo -e "aaa\nbbb\nccc" | lokmenu -p "左上: " --anchor top-left -W 300
 
@@ -85,3 +81,29 @@ echo -e "文档/报告.txt\n文档/笔记.txt\n图片/照片.png\n音乐/歌曲.
     --hfg "#ff9e64" \
     --prompt-bg "#24283b" --prompt-fg "#c0caf5" \
   | xargs -0 echo "选中了:"
+
+-----------------
+
+# 1. 路径边界匹配测试（你的 niri 问题）
+echo -e "/home/user/.config/niri/config\n/home/fajknli/.config/niri\n/home/fajknli/.local/nirixxx\n/home/user/niri-theme\n/home/user/.config/waybar/niri.conf" | lokmenu -p "路径: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#d70000" --prefix-fg "#11121c"
+
+# 2. 中文 + 拼音测试
+echo -e "浏览器\n播放器\n音乐播放器\n图书管理器\n文件管理器\n蓝牙设置\n网络设置\n系统监控\n终端模拟器\n屏幕截图" | lokmenu -p "应用: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#d70000" --prefix-fg "#11121c"
+
+# 3. 中英混合 + 路径测试
+echo -e "/home/音乐/播放器/周杰伦.mp3\n/home/下载/VLC播放器\n~/Documents/项目报告.pdf\n~/.config/音乐/settings.json\n/home/user/.local/share/播放器\n/opt/VLC-播放器/lib/vlc\n/home/music/摇滚/播放列表.m3u" | lokmenu -p "文件: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#d70000" --prefix-fg "#11121c"
+
+# 4. 短文本密集测试（纯中文）
+echo -e "你好世界\n你好\n你好的\n世界你好\n你\n好\n你好吗\n世界" | lokmenu -p "搜索: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#005f5f" --prefix-fg "#ffffff"
+
+# 5. 纯英文路径测试（边界 vs 非边界）
+echo -e "src/main.rs\nsrc/matcher.rs\nsrc/render.rs\nsrc/state.rs\nCargo.lock\nCargo.toml\nREADME.md\n.github/workflows/ci.yml\n.gitignore" | lokmenu -p "open file: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#3a3a5c" --prefix-fg "#e0e0ff"
+
+# 6. 长路径截断测试
+echo -e "/home/user/.local/share/flatpak/app/com.github.nickvision.tubeconverter/current/active/files/share/icons/hicolor/256x256/apps/com.github.nickvision.tubeconverter.png\n/home/user/.config/niri/config\n/usr/share/icons/Papirus/48x48/apps/firefox.svg" | lokmenu -p "图标: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#8b0000" --prefix-fg "#ffd700"
+
+# 7. 底部锚点 + 中文
+echo -e "蓝牙\n蓝牙耳机\n蓝牙音箱\n蓝牙设置\n蓝牙管理\n蓝牙共享\n蓝牙设备列表\n蓝牙连接历史" | lokmenu -p "蓝牙: " --anchor bottom -f "0xProto Nerd Font" -s 12 --prefix-bg "#004488" --prefix-fg "#ffffff"
+
+# 8. 连续性打分测试（验证 DP 是否正确选路径）
+echo -e "configure\nniri\nconfig/niri\nniri-config\n.cofnig/niri\n.niri/config\nwayland-niri\nx11-niri\nconfigure-niri" | lokmenu -p "test: " -f "0xProto Nerd Font" -s 12 --prefix-bg "#2d5a27" --prefix-fg "#ffffff"

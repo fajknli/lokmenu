@@ -85,6 +85,8 @@ pub struct App {
     pub fractional_scale_obj: Option<WpFractionalScaleV1>,
     pub pointer_y: f64,
     pub axis_accumulator: f64,
+    pub cursor_x: i32,  // 新增
+    pub cursor_y: i32,  // 新增
 }
 
 pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>, String)>> {
@@ -141,6 +143,8 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
         fractional_scale_obj: None,
         pointer_y: 0.0,
         axis_accumulator: 0.0,
+        cursor_x: 0,     // 新增
+        cursor_y: 0,     // 新增
     };
 
     let surface = app.compositor.create_surface(&qh, ());
@@ -253,7 +257,11 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
             if let Some(idx) = slot_idx {
                 if let Some(slot) = app.buffers[idx].as_mut() {
                     let pixels = unsafe { std::slice::from_raw_parts_mut(slot.shm.ptr, slot.shm.size) };
-                    app.renderer.draw_frame(pixels, w, h, scale, &app.state, &app.config);
+                    // 修改这里，接收返回值
+                    if let Some((cx, cy)) = app.renderer.draw_frame(pixels, w, h, scale, &app.state, &app.config) {
+                        app.cursor_x = cx;
+                        app.cursor_y = cy;
+                    }
                     slot.busy = true;
 
                     if let Some(surface) = &app.surface {
@@ -341,9 +349,10 @@ impl Dispatch<ZwpTextInputV3, ()> for App {
         use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::Event;
         match event {
             Event::Enter { .. } => {
-                if let Some(ti) = &state.text_input {
+                if let Some(ti) = state.text_input.clone() {
                     ti.enable();
                     ti.set_content_type(ContentHint::None, ContentPurpose::Normal);
+                    update_ime_cursor(&ti, state);
                     ti.commit();
                 }
             }
@@ -360,6 +369,10 @@ impl Dispatch<ZwpTextInputV3, ()> for App {
             Event::CommitString { text, .. } => {
                 if let Some(t) = text {
                     state.state.commit_str(&t);
+                }
+                if let Some(ti) = state.text_input.clone() {
+                    update_ime_cursor(&ti, state);
+                    ti.commit();
                 }
             }
             Event::Done { .. } => {}
@@ -432,7 +445,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
 
                 if let Some(slot) = state.buffers[0].as_mut() {
                     let pixels = unsafe { std::slice::from_raw_parts_mut(slot.shm.ptr, slot.shm.size) };
-                    state.renderer.draw_frame(pixels, state.width, state.height, scale, &state.state, &state.config);
+                    if let Some((cx, cy)) = state.renderer.draw_frame(pixels, state.width, state.height, scale, &state.state, &state.config) {
+                        state.cursor_x = cx;
+                        state.cursor_y = cy;
+                    }
                     slot.busy = true;
 
                     if let Some(surface) = &state.surface {
@@ -457,9 +473,10 @@ impl Dispatch<WlKeyboard, ()> for App {
         use wl_keyboard::Event;
         match event {
             Event::Enter { .. } => {
-                if let Some(ti) = &state.text_input {
+                if let Some(ti) = state.text_input.clone() {
                     ti.enable();
                     ti.set_content_type(ContentHint::None, ContentPurpose::Normal);
+                    update_ime_cursor(&ti, state);
                     ti.commit();
                 }
             }
@@ -631,4 +648,19 @@ impl Dispatch<WlPointer, ()> for App {
             _ => {}
         }
     }
+}
+
+fn update_ime_cursor(ti: &ZwpTextInputV3, app: &mut App) {
+    let scale = app.fractional_scale as f32 / 120.0;
+    if scale <= 0.0 { return; }
+
+    let logical_x = (app.cursor_x as f32 / scale).round() as i32;
+    let logical_y = (app.cursor_y as f32 / scale).round() as i32;
+
+    let font_size = app.config.font_size * scale;
+    let base_h = app.renderer.measure_line_height(font_size, &app.config.font);
+    let phys_line_h = (base_h * 1.15).ceil() as i32;
+    let logical_h = (phys_line_h as f32 / scale).ceil() as i32;
+
+    ti.set_cursor_rectangle(logical_x, logical_y, 2, logical_h);
 }

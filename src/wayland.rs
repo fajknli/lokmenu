@@ -398,9 +398,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
                 proxy.ack_configure(serial);
                 state.configured = true;
 
-                let is_full_width = state.config.anchor.is_full_width();
                 let w_u32 = if width == 0 {
-                    if is_full_width && state.config.width == 0 { 800 } else if state.config.width == 0 { 800 } else { state.config.width }
+                    if state.config.width == 0 { 800 } else { state.config.width }
                 } else {
                     width
                 };
@@ -472,7 +471,7 @@ impl Dispatch<WlKeyboard, ()> for App {
                 state.state.clear_preedit();
             }
             Event::Modifiers { mods_depressed, .. } => {
-                state.shift_pressed = (mods_depressed & 0x1) != 0 || (mods_depressed & 0x10) != 0;
+                state.shift_pressed = (mods_depressed & 0x1) != 0;
                 state.ctrl_pressed = (mods_depressed & 0x4) != 0;
             }
             Event::Key { state: key_state, key, .. } => {
@@ -549,7 +548,7 @@ impl Dispatch<WlPointer, ()> for App {
                         let scale = state.fractional_scale as f32 / 120.0;
                         let phys_font_size = state.config.font_size * scale;
                         let base_phys_line_h = state.renderer.measure_line_height(phys_font_size, &state.config.font);
-                        let phys_line_h = (base_phys_line_h + 6.0 * scale).ceil() as f32;
+                        let phys_line_h = (base_phys_line_h * 1.15).ceil() as f32;
 
                         if phys_line_h > 0.0 {
                             let logical_line_h = phys_line_h / scale;

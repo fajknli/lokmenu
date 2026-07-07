@@ -245,9 +245,8 @@ impl Renderer {
                 let prompt_info = &lines[i];
                 let left_padding = (8.0 * scale).round() as i32;
                 if prompt_info.prefix_byte_len > 0 {
-                    // 前缀段背景
                     let prefix_end_x = estimate_prefix_pixel_width(
-                        prompt_info.prefix_byte_len, left_padding, run,
+                        prompt_info.prefix_byte_len, left_padding, run, scale,
                     );
                     fill_rect(pixels, stride, width, height, 0, y_top, prefix_end_x, actual_rect_h, pxbg_r, pxbg_g, pxbg_b, pxbg_a);
                     // 输入段背景
@@ -293,7 +292,6 @@ impl Renderer {
                     } else if line_info.is_selected {
                         (sfg_r, sfg_g, sfg_b)  // 选中但非匹配字符，用选中色
                     } else if i == prompt_idx {
-                        let _left_padding = (8.0 * scale).round() as i32;
                         if line_info.prefix_byte_len > 0 && (glyph.start as i32) < line_info.prefix_byte_len as i32 {
                             (pxfg_r, pxfg_g, pxfg_b)
                         } else {
@@ -424,9 +422,9 @@ fn blend_pixel_fast(pixels: &mut [u8], idx: usize, r: u8, g: u8, b: u8, alpha: u
 
 fn fill_rect(pixels: &mut [u8], stride: i32, buf_w: i32, buf_h: i32, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8, a: u8) {
     let x_start = x.max(0);
-    let x_end = (x + w).min(buf_w);
+    let x_end = x.saturating_add(w).min(buf_w);
     let y_start = y.max(0);
-    let y_end = (y + h).min(buf_h);
+    let y_end = y.saturating_add(h).min(buf_h);
 
     if x_start >= x_end || y_start >= y_end { return; }
 
@@ -447,15 +445,17 @@ fn estimate_prefix_pixel_width(
     prefix_byte_len: usize,
     left_padding: i32,
     run: &cosmic_text::LayoutRun,
+    scale: f32,
 ) -> i32 {
     for glyph in run.glyphs.iter() {
         if glyph.start >= prefix_byte_len {
-            return (glyph.x as i32) + left_padding;
+            let phys = glyph.physical((0.0, run.line_y), scale);
+            return phys.x + left_padding;
         }
     }
-    // 所有字形都属于前缀（输入为空），取最后一个字形的右边缘
     if let Some(last) = run.glyphs.last() {
-        (last.x + last.w) as i32 + left_padding
+        let phys = last.physical((0.0, run.line_y), scale);
+        phys.x + (last.w * scale).round() as i32 + left_padding
     } else {
         left_padding
     }

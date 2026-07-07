@@ -235,6 +235,7 @@ impl Renderer {
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
         let actual_rect_h = line_h.ceil() as i32;
+        let text_y_offset = ((line_h - base_line_h) / 2.0).round() as i32;
 
 
         for (i, run) in runs.iter().enumerate() {
@@ -280,7 +281,7 @@ impl Renderer {
                     let placement = image.placement;
                     let left_padding = (8.0 * scale).round() as i32;
                     let px = physical.x + placement.left + left_padding;
-                    let py = physical.y - placement.top;
+                    let py = physical.y - placement.top + text_y_offset;
 
                     let char_idx = line_info.text.get(..glyph.start)
                         .map(|s| s.chars().count())

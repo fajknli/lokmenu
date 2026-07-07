@@ -74,7 +74,7 @@ struct Cli {
     sfg: String,
 
     /// 匹配字符高亮颜色
-    #[arg(long, default_value = "#C93B3B")]
+    #[arg(long, default_value = "#D70000")]
     hfg: String,
 
     /// 输入框文字颜色

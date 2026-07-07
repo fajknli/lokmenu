@@ -58,7 +58,7 @@ impl Default for Config {
             fg:        0xFFD4DCF2,
             sbg:       0xFF242838,
             sfg:       0xFFD4DCF2,
-            hfg:       0xFFC93B3B,
+            hfg:       0xFFD70000,
             prompt_bg: 0xFF1B1D2B,
             prompt_fg: 0xFFD4DCF2,
             prefix_fg: 0xFFD4DCF2,

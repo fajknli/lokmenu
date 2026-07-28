@@ -27,15 +27,43 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new() -> Self {
-        let mut font_system = FontSystem::new();
+    pub fn new(font_name: &str) -> Self {
+        // ↓↓↓ 核心修改：替代原来的 FontSystem::new() ↓↓↓
+        let mut db = cosmic_text::fontdb::Database::new();
+
+        // 1. 优先加载用户指定的字体
+        if !font_name.is_empty() {
+            if let Some(path) = fc_match(font_name) {
+                let _ = db.load_font_file(&path);
+            } else {
+                eprintln!("Warning: Font '{}' not found via fc-match, falling back.", font_name);
+            }
+        }
+
+        // 2. 加载一个保底的中文字体，防止中文乱码
+        for pattern in &["sans:lang=zh", "sans-serif", "sans"] {
+            if let Some(path) = fc_match(pattern) {
+                if db.load_font_file(&path).is_ok() {
+                    break;
+                }
+            }
+        }
+
+        if db.faces().count() == 0 {
+            eprintln!("lokmenu: error: no fonts found. Please install fonts.");
+            std::process::exit(1);
+        }
+
+        let mut font_system = FontSystem::new_with_locale_and_db("en".to_string(), db);
+        // ↑↑↑ 核心修改结束 ↑↑↑
+
         let metrics = Metrics::new(18.0, 27.0);
         let buffer = Buffer::new(&mut font_system, metrics);
         Self {
             font_system,
             swash_cache: SwashCache::new(),
             buffer,
-            font_checked: false,
+            font_checked: true, // 这里改成 true，因为我们在 new 的时候已经确认过字体了
             last_text: String::new(),
             last_width: 0,
             last_height: 0,
@@ -395,6 +423,17 @@ impl Renderer {
 
         None // 新增：如果没有画光标，返回 None
     }
+}
+
+fn fc_match(pattern: &str) -> Option<String> {
+    std::process::Command::new("fc-match")
+        .args(["--format", "%{file}", pattern])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        })
 }
 
 fn extract_rgba(c: u32) -> (u8, u8, u8, u8) {

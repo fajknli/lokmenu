@@ -38,6 +38,9 @@ use crate::keyboard::get_char;
 use crate::render::Renderer;
 use crate::state::State;
 
+#[derive(Debug)]
+struct SlotId(pub usize);
+
 pub struct ShmBuffer {
     ptr: *mut u8,
     size: usize,
@@ -120,7 +123,7 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
 
     let mut app = App {
         state: State::new(items, &config),
-        renderer: Renderer::new(),
+        renderer: Renderer::new(&config.font),
         config,
         layer_shell,
         compositor,
@@ -224,57 +227,70 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
         }
 
         if app.state.need_redraw && app.configured {
-            let w = app.width;
-            let h = app.height;
-            let scale = app.fractional_scale as f32 / 120.0;
+            // ↓↓↓ 新增：快路径检查开始 ↓↓↓
+            let wayland_fd = conn.backend().poll_fd().as_raw_fd();
+            let mut peek = [
+                libc::pollfd { fd: wayland_fd, events: libc::POLLIN, revents: 0 },
+            ];
+            // 超时时间为 0 的非阻塞 poll，仅仅是为了看一眼还有没有事件
+            unsafe { libc::poll(peek.as_mut_ptr(), 1, 0); }
 
-            let mut slot_idx = None;
-            for i in 0..app.buffers.len() {
-                if let Some(slot) = &app.buffers[i] {
-                    if !slot.busy && slot.width == w && slot.height == h {
-                        slot_idx = Some(i);
-                        break;
-                    }
-                }
-            }
+            if peek[0].revents & libc::POLLIN != 0 {
+                // 队列里还有事件没处理完 → 跳过本次渲染，等下一轮循环
+            } else {
+                // 队列空了 → 安心渲染
+                // ↓↓↓ 你原来的渲染逻辑全部放进这个 else 里 ↓↓↓
+                let w = app.width;
+                let h = app.height;
+                let scale = app.fractional_scale as f32 / 120.0;
 
-            if slot_idx.is_none() {
+                let mut slot_idx = None;
                 for i in 0..app.buffers.len() {
-                    let need_recreate = match &app.buffers[i] {
-                        None => true,
-                        Some(slot) => !slot.busy && (slot.width != w || slot.height != h),
-                    };
-                    if need_recreate {
-                        app.buffers[i] = None;
-                        if create_shm_buffer(&mut app, &qh, w, h, i) {
+                    if let Some(slot) = &app.buffers[i] {
+                        if !slot.busy && slot.width == w && slot.height == h {
                             slot_idx = Some(i);
                             break;
                         }
                     }
                 }
-            }
 
-            if let Some(idx) = slot_idx {
-                if let Some(slot) = app.buffers[idx].as_mut() {
-                    let pixels = unsafe { std::slice::from_raw_parts_mut(slot.shm.ptr, slot.shm.size) };
-                    // 修改这里，接收返回值
-                    if let Some((cx, cy)) = app.renderer.draw_frame(pixels, w, h, scale, &app.state, &app.config) {
-                        app.cursor_x = cx;
-                        app.cursor_y = cy;
-                    }
-                    slot.busy = true;
-
-                    if let Some(surface) = &app.surface {
-                        surface.attach(Some(&slot.buffer), 0, 0);
-                        surface.damage(0, 0, w, h);
-
-                        if let Some(viewport) = &app.viewport {
-                            viewport.set_destination(app.logical_width, app.logical_height);
+                if slot_idx.is_none() {
+                    for i in 0..app.buffers.len() {
+                        let need_recreate = match &app.buffers[i] {
+                            None => true,
+                            Some(slot) => !slot.busy && (slot.width != w || slot.height != h),
+                        };
+                        if need_recreate {
+                            app.buffers[i] = None;
+                            if create_shm_buffer(&mut app, &qh, w, h, i) {
+                                slot_idx = Some(i);
+                                break;
+                            }
                         }
-
-                        surface.commit();
                     }
-                    app.state.need_redraw = false;
+                }
+
+                if let Some(idx) = slot_idx {
+                    if let Some(slot) = app.buffers[idx].as_mut() {
+                        let pixels = unsafe { std::slice::from_raw_parts_mut(slot.shm.ptr, slot.shm.size) };
+                        if let Some((cx, cy)) = app.renderer.draw_frame(pixels, w, h, scale, &app.state, &app.config) {
+                            app.cursor_x = cx;
+                            app.cursor_y = cy;
+                        }
+                        slot.busy = true;
+
+                        if let Some(surface) = &app.surface {
+                            surface.attach(Some(&slot.buffer), 0, 0);
+                            surface.damage(0, 0, w, h);
+
+                            if let Some(viewport) = &app.viewport {
+                                viewport.set_destination(app.logical_width, app.logical_height);
+                            }
+
+                            surface.commit();
+                        }
+                        app.state.need_redraw = false;
+                    }
                 }
             }
         }
@@ -310,7 +326,12 @@ fn create_shm_buffer(app: &mut App, qh: &QueueHandle<App>, width: i32, height: i
     let shm = ShmBuffer { ptr, size, _fd: fd };
 
     let pool = app.shm.create_pool(shm._fd.as_fd(), size as i32, qh, ());
-    let buffer = pool.create_buffer(0, width, height, stride, wayland_client::protocol::wl_shm::Format::Argb8888, qh, idx);
+    let buffer = pool.create_buffer(
+        0, width, height, stride,
+        wayland_client::protocol::wl_shm::Format::Argb8888,
+        qh,
+        SlotId(idx)
+    );
     pool.destroy();
 
     app.buffers[idx] = Some(BufferSlot {
@@ -332,10 +353,11 @@ impl Dispatch<ZwlrLayerShellV1, ()> for App { fn event(_: &mut Self, _: &ZwlrLay
 impl Dispatch<WlShm, ()> for App { fn event(_: &mut Self, _: &WlShm, _: <WlShm as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<wayland_client::protocol::wl_shm_pool::WlShmPool, ()> for App { fn event(_: &mut Self, _: &wayland_client::protocol::wl_shm_pool::WlShmPool, _: <wayland_client::protocol::wl_shm_pool::WlShmPool as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 
-impl Dispatch<WlBuffer, usize> for App {
-    fn event(state: &mut Self, _proxy: &WlBuffer, event: <WlBuffer as wayland_client::Proxy>::Event, data: &usize, _: &Connection, _: &QueueHandle<Self>) {
+impl Dispatch<WlBuffer, SlotId> for App {
+    fn event(state: &mut Self, _proxy: &WlBuffer, event: <WlBuffer as wayland_client::Proxy>::Event, data: &SlotId, _: &Connection, _: &QueueHandle<Self>) {
         if let wayland_client::protocol::wl_buffer::Event::Release = event {
-            if let Some(Some(slot)) = state.buffers.get_mut(*data) {
+            // 通过 data.0 取出真正的索引
+            if let Some(Some(slot)) = state.buffers.get_mut(data.0) {
                 slot.busy = false;
             }
         }

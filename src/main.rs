@@ -134,7 +134,11 @@ fn main() {
 
     // 鲁棒性修复：限制最大读取条目数，防止 OOM
     const MAX_ITEMS: usize = 100_000;
-    let items: Vec<String> = input.lines().take(MAX_ITEMS).map(|s| s.to_string()).collect();
+    // 把制表符替换成 4 个空格，防止字体不支持导致显示方块
+    let items: Vec<String> = input.lines()
+        .take(MAX_ITEMS)
+        .map(|s| s.replace('\t', "    "))
+        .collect();
 
     let lines = if cli.lines == 0 {
         items.len().min(20) as u32

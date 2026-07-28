@@ -26,8 +26,14 @@ pub struct State {
 
 impl State {
     pub fn new(items: Vec<String>, config: &Config) -> Self {
-        let cached_pinyin = items.par_iter().map(|s| {
-            crate::pinyin::get_pinyin_pair(s)
+        let cached_pinyin: Vec<(String, String)> = items.par_iter().map(|s| {
+            // 检查是否包含 CJK 统一表意文字（也就是中文汉字）
+            if s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+                crate::pinyin::get_pinyin_pair(s)
+            } else {
+                // 纯英文/符号直接返回空，跳过昂贵的拼音计算
+                (String::new(), String::new())
+            }
         }).collect();
 
         let mut state = Self {

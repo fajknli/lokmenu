@@ -348,7 +348,25 @@ fn create_shm_buffer(app: &mut App, qh: &QueueHandle<App>, width: i32, height: i
 
 impl Dispatch<WlRegistry, GlobalListContents> for App { fn event(_: &mut Self, _: &WlRegistry, _: <WlRegistry as wayland_client::Proxy>::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<WlCompositor, ()> for App { fn event(_: &mut Self, _: &WlCompositor, _: <WlCompositor as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
-impl Dispatch<WlSurface, ()> for App { fn event(_: &mut Self, _: &WlSurface, _: <WlSurface as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
+impl Dispatch<WlSurface, ()> for App {
+    fn event(state: &mut Self, _: &WlSurface, event: <WlSurface as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        // 监听整数缩放变化 (某些不支持分数缩放的合成器会用这个)
+        if let wayland_client::protocol::wl_surface::Event::PreferredBufferScale { factor } = event {
+            let new_scale = (factor as u32).max(1) * 120; // 转换为统一的 120 倍数格式
+            if state.fractional_scale != new_scale {
+                state.fractional_scale = new_scale;
+                let scale_f = new_scale as f32 / 120.0;
+                state.width = ((state.logical_width as f32 * scale_f).round() as i32).max(1);
+                state.height = ((state.logical_height as f32 * scale_f).round() as i32).max(1);
+                // 销毁旧 buffer，下轮循环会自动重建
+                for i in 0..2 {
+                    state.buffers[i] = None;
+                }
+                state.state.need_redraw = true;
+            }
+        }
+    }
+}
 impl Dispatch<ZwlrLayerShellV1, ()> for App { fn event(_: &mut Self, _: &ZwlrLayerShellV1, _: <ZwlrLayerShellV1 as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<WlShm, ()> for App { fn event(_: &mut Self, _: &WlShm, _: <WlShm as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }
 impl Dispatch<wayland_client::protocol::wl_shm_pool::WlShmPool, ()> for App { fn event(_: &mut Self, _: &wayland_client::protocol::wl_shm_pool::WlShmPool, _: <wayland_client::protocol::wl_shm_pool::WlShmPool as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {} }

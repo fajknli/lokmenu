@@ -1,14 +1,15 @@
 // src/state.rs
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use crate::config::Config;
 use crate::matcher;
-use rayon::prelude::*;
+use std::collections::HashSet;
 
 pub struct State {
     pub items: Vec<String>,
-    pub cached_pinyin: Vec<(String, String)>,
     pub query: String,
+    pub pinyin_cache: Arc<RwLock<HashMap<usize, (String, String)>>>,
     pub preedit: String,
     pub filtered_items: Vec<usize>,
     pub highlights: Vec<Vec<usize>>,
@@ -26,19 +27,10 @@ pub struct State {
 
 impl State {
     pub fn new(items: Vec<String>, config: &Config) -> Self {
-        let cached_pinyin: Vec<(String, String)> = items.par_iter().map(|s| {
-            // 检查是否包含 CJK 统一表意文字（也就是中文汉字）
-            if s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
-                crate::pinyin::get_pinyin_pair(s)
-            } else {
-                // 纯英文/符号直接返回空，跳过昂贵的拼音计算
-                (String::new(), String::new())
-            }
-        }).collect();
 
         let mut state = Self {
             items,
-            cached_pinyin,
+            pinyin_cache: Arc::new(RwLock::new(HashMap::new())),
             query: String::new(),
             preedit: String::new(),
             filtered_items: Vec::new(),
@@ -65,7 +57,7 @@ impl State {
             self.highlights = vec![Vec::new(); self.items.len()];
         } else {
             let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
-            let results = matcher::filter(&items, &self.cached_pinyin, &self.query);
+            let results = matcher::filter(&items, &self.pinyin_cache, &self.query);
             self.filtered_items = results.iter().map(|r| r.original_idx).collect();
             self.highlights = results.iter().map(|r| r.highlight_indices.clone()).collect();
         }

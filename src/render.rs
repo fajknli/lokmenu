@@ -263,7 +263,8 @@ impl Renderer {
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
         let actual_rect_h = line_h.ceil() as i32;
-        let text_y_offset = ((line_h - base_line_h) / 2.0).round() as i32;
+        // 【抗锯齿对齐优化】基于实际渲染矩形高度进行精确居中，消除小数截断导致的发虚
+        let text_y_offset = ((actual_rect_h as f32 - base_line_h) / 2.0).round() as i32;
 
 
         for (i, run) in runs.iter().enumerate() {

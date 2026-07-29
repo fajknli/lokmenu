@@ -1,6 +1,8 @@
 // src/matcher.rs
 
 use std::cell::RefCell;
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 
 const MAX_MATCHES: usize = 500;
 
@@ -46,7 +48,12 @@ fn quick_contains(text: &str, q_chars: &[char]) -> bool {
     false
 }
 
-pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) -> Vec<MatchResult> {
+// 修改函数签名，接收缓存池
+pub fn filter(
+    items: &[&str],
+    pinyin_cache: &Arc<RwLock<HashMap<usize, (String, String)>>>,
+    query: &str
+) -> Vec<MatchResult> {
     if query.is_empty() {
         return items
             .iter()
@@ -67,16 +74,38 @@ pub fn filter(items: &[&str], pinyin_cache: &[(String, String)], query: &str) ->
         if let Some(res) = fuzzy_match(item, &q_chars) {
             results.push(MatchResult {
                 original_idx: idx,
-                score: res.0 + 1000,
+                score: res.0 + 50,
                 highlight_indices: res.1,
             });
             continue;
         }
 
-        // 优先级 2: 拼音匹配 (跳过空缓存)
-        let (full, initials) = &pinyin_cache[idx];
-        if !initials.is_empty() || !full.is_empty() {
-            if let Some(res) = match_pinyin_cached(full, initials, &q_chars) {
+        // 优先级 2: 拼音匹配 (懒加载)
+        // 1. 尝试从缓存读 (无论是真拼音还是空标记)
+        let cached = {
+            let cache_read = pinyin_cache.read().unwrap();
+            cache_read.get(&idx).cloned()
+        };
+
+        // 2. 如果没缓存，说明是第一次遇到这个词条
+        let pinyin = if let Some(p) = cached {
+            p
+        } else {
+            // 快速排斥：没中文的直接存入空标记，下次就不再遍历了
+            let has_cjk = item.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+            let p = if has_cjk {
+                crate::pinyin::get_pinyin_pair(item)
+            } else {
+                (String::new(), String::new()) // 空标记
+            };
+            let mut cache_write = pinyin_cache.write().unwrap();
+            cache_write.insert(idx, p.clone());
+            p
+        };
+
+        // 3. 只有非空标记的（即真有中文拼音的）才去匹配
+        if !pinyin.1.is_empty() || !pinyin.0.is_empty() {
+            if let Some(res) = match_pinyin_cached(&pinyin.0, &pinyin.1, &q_chars) {
                 results.push(MatchResult {
                     original_idx: idx,
                     score: res.0,
@@ -225,13 +254,13 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
 fn match_pinyin_cached(full: &str, initials: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
     if !initials.is_empty() {
         if let Some(res) = fuzzy_match(initials, q_chars) {
-            return Some((res.0 - 10, res.1));
+            return Some((res.0, res.1));
         }
     }
 
     if !full.is_empty() {
         if let Some(res) = fuzzy_match(full, q_chars) {
-            return Some((res.0 - 20, res.1));
+            return Some((res.0, res.1));
         }
     }
 

@@ -547,6 +547,21 @@ impl Dispatch<WlKeyboard, ()> for App {
                                 if is_bottom { state.state.move_up(); } else { state.state.move_down(); }
                                 return;
                             }
+                            47 => {                                      // Ctrl + V (粘贴)
+                                // 调用 wl-paste 获取剪贴板内容
+                                if let Ok(output) = std::process::Command::new("wl-paste")
+                                    .arg("--no-newline") // 去掉末尾的换行符，防止菜单输入断裂
+                                    .output()
+                                {
+                                    if let Ok(text) = String::from_utf8(output.stdout) {
+                                        if !text.is_empty() {
+                                            // 将粘贴的内容提交给状态机
+                                            state.state.commit_str(&text);
+                                        }
+                                    }
+                                }
+                                return;
+                            }
                             _ => {}
                         }
                         return;

@@ -536,26 +536,29 @@ impl Dispatch<WlKeyboard, ()> for App {
                     if state.ctrl_pressed {
                         let is_bottom = state.config.anchor.is_bottom();
                         match key {
-                            46 => { state.state.cancel(); return; }     // Ctrl + C
-                            22 => { state.state.clear_query(); return; } // Ctrl + U
-                            17 => { state.state.delete_word(); return; } // Ctrl + W
-                            25 => {                                      // Ctrl + P
+                            46 => { state.state.cancel(); return; }          // Ctrl + C
+                            22 => { state.state.delete_to_start(); return; } // Ctrl + U (删到行首)
+                            17 => { state.state.delete_word_left(); return; }// Ctrl + W
+                            37 => { state.state.delete_to_end(); return; }   // Ctrl + K (删到行尾)
+                            30 => { state.state.cursor_start(); return; }    // Ctrl + A
+                            18 => { state.state.cursor_end(); return; }      // Ctrl + E
+                            48 => { state.state.cursor_left(); return; }     // Ctrl + B
+                            33 => { state.state.cursor_right(); return; }    // Ctrl + F
+                            25 => {                                          // Ctrl + P
                                 if is_bottom { state.state.move_down(); } else { state.state.move_up(); }
                                 return;
                             }
-                            49 => {                                      // Ctrl + N
+                            49 => {                                          // Ctrl + N
                                 if is_bottom { state.state.move_up(); } else { state.state.move_down(); }
                                 return;
                             }
-                            47 => {                                      // Ctrl + V (粘贴)
-                                // 调用 wl-paste 获取剪贴板内容
+                            47 => {                                          // Ctrl + V (粘贴)
                                 if let Ok(output) = std::process::Command::new("wl-paste")
-                                    .arg("--no-newline") // 去掉末尾的换行符，防止菜单输入断裂
+                                    .arg("--no-newline")
                                     .output()
                                 {
                                     if let Ok(text) = String::from_utf8(output.stdout) {
                                         if !text.is_empty() {
-                                            // 将粘贴的内容提交给状态机
                                             state.state.commit_str(&text);
                                         }
                                     }
@@ -567,8 +570,9 @@ impl Dispatch<WlKeyboard, ()> for App {
                         return;
                     }
 
+                    // 非组合键
                     match key {
-                        29 | 42 | 54 | 56 | 97 | 100 | 125 | 126 => return,
+                        29 | 42 | 54 | 56 | 97 | 100 | 125 | 126 => return, // 忽略 Shift, Ctrl, Alt 等单键
                         1  => { state.state.cancel(); return; }      // Esc
                         14 => { state.state.backspace(); return; }   // Bksp
                         15 => {
@@ -591,6 +595,10 @@ impl Dispatch<WlKeyboard, ()> for App {
                             if is_bottom { state.state.move_up(); } else { state.state.move_down(); }
                             return;
                         }
+                        105 => { state.state.cursor_left(); return; }   // Left
+                        106 => { state.state.cursor_right(); return; }  // Right
+                        102 => { state.state.cursor_start(); return; }  // Home
+                        107 => { state.state.cursor_end(); return; }    // End
                         _ => {}
                     }
 

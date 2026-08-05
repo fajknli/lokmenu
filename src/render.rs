@@ -150,12 +150,13 @@ impl Renderer {
             state.query.clone()
         };
 
+        let prompt_prefix_len = config.prompt.len();
         let prompt_line = LineInfo {
             text: format!("{}{}{}", config.prompt, display_query, state.preedit),
             is_selected: false,
             is_marked: false,
             highlights: HashSet::new(),
-            prefix_byte_len: config.prompt.len(),
+            prefix_byte_len: prompt_prefix_len,
         };
 
         let mut list_lines: Vec<LineInfo> = Vec::new();
@@ -399,7 +400,7 @@ impl Renderer {
                 }
             }
         }
-        // 硬件光标：在 prompt 行最后一个字符后面画竖线
+        // 硬件光标：在 prompt 行基于 cursor_pos 画竖线
         if state.preedit.is_empty() {
             if let Some(prompt_run) = runs.get(prompt_idx) {
                 let left_padding = (8.0 * scale).round() as i32;
@@ -411,22 +412,45 @@ impl Renderer {
 
                 let (cr, cg, cb) = (pfg_r, pfg_g, pfg_b);
 
-                let cursor_x = match prompt_run.glyphs.last() {
-                    Some(last_glyph) => {
-                        let phys = last_glyph.physical((0.0, prompt_run.line_y), scale);
-                        phys.x + (last_glyph.w * scale).round() as i32 + left_padding + 2
+                // 计算光标对应的字节偏移量
+                // display_query 是实际显示的内容，需要考虑密码模式的星号
+                let cursor_char_pos = state.cursor_pos.min(display_query.chars().count());
+                let cursor_byte_offset = display_query.char_indices()
+                    .nth(cursor_char_pos)
+                    .map(|(b, _)| b)
+                    .unwrap_or_else(|| display_query.len());
+
+                // 加上 prompt 的字节长度，因为在渲染时 prompt 和 query 是拼在一起的
+                let target_byte_pos = prompt_prefix_len + cursor_byte_offset;
+
+                // 在 glyphs 中找到光标应在的 x 坐标
+                let mut cursor_x = left_padding; // 默认在行首
+                for glyph in prompt_run.glyphs.iter() {
+                    let phys = glyph.physical((0.0, prompt_run.line_y), scale);
+                    let glyph_end_x = phys.x + (glyph.w * scale).round() as i32 + left_padding;
+
+                    // 如果某个字形的结尾小于等于光标位置，光标就在它后面
+                    if glyph.end <= target_byte_pos {
+                        cursor_x = glyph_end_x;
+                    } else {
+                        // 因为 glyphs 是顺序排的，一旦超过了光标位置就可以跳出
+                        break;
                     }
-                    None => left_padding,
-                };
+                }
+
+                // 如果列表为空，或者没有命中任何 glyph，确保光标在 padding 处
+                if prompt_run.glyphs.is_empty() {
+                    cursor_x = left_padding;
+                }
 
                 fill_rect(pixels, stride, width, height, cursor_x, cursor_y, cursor_w, cursor_h, cr, cg, cb, 255);
 
-                // 新增：返回光标的物理坐标
+                // 返回光标的物理坐标
                 return Some((cursor_x, cursor_y));
             }
         }
 
-        None // 新增：如果没有画光标，返回 None
+        None // 如果没有画光标，返回 None
     }
 }
 

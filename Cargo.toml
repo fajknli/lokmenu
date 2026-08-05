@@ -1,6 +1,6 @@
 [package]
 name = "lokmenu"
-version = "1.2.0"
+version = "2.0.0"
 edition = "2021"
 description = "A CJK-optimized Wayland menu tool"
 license = "MIT"
@@ -11,7 +11,6 @@ categories = ["command-line-utilities"]
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 wayland-client = "0.31"
-# 确保启用了 client, staging, unstable 特性
 wayland-protocols = { version = "0.31", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 libc = "0.2"

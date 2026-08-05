@@ -10,7 +10,7 @@ pub struct State {
     pub query: String,
     pub cursor_pos: usize,
     pub pinyin_cache: HashMap<usize, crate::pinyin::PinyinData>,
-    pub history: HashMap<String, u32>, // 新增：历史记录
+    pub history: HashMap<String, u32>,
     pub preedit: String,
     pub filtered_items: Vec<usize>,
     pub highlights: Vec<HashSet<usize>>,
@@ -26,7 +26,7 @@ pub struct State {
     pub need_redraw: bool,
 }
 
-// 辅助函数：获取历史记录文件路径
+// 获取历史记录文件路径
 fn get_history_path() -> Option<PathBuf> {
     let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
         PathBuf::from(xdg)
@@ -85,7 +85,6 @@ impl State {
         state
     }
 
-    // 替换 update_filter 方法
     pub fn update_filter(&mut self) {
         if self.query.is_empty() {
             let mut indexed_items: Vec<(usize, &String)> = self.items.iter().enumerate().collect();
@@ -111,7 +110,6 @@ impl State {
         self.need_redraw = true;
     }
 
-    // 替换 select_current 方法
     pub fn select_current(&mut self, multi_select: bool) {
         if multi_select && !self.marked_items.is_empty() {
             let mut result: Vec<String> = Vec::new();
@@ -166,7 +164,7 @@ impl State {
         self.exit_code = Some(0);
     }
 
-    // 辅助函数：将字符索引转为字节索引
+    // 将字符索引转为字节索引
     fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
         s.char_indices()
             .nth(char_idx)

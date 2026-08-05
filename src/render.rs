@@ -9,7 +9,6 @@ struct LineInfo {
     text: String,
     is_selected: bool,
     is_marked: bool,
-    // 修改：改为 HashSet，使 contains 查找达到 O(1) 复杂度
     highlights: HashSet<usize>,
     prefix_byte_len: usize,
 }
@@ -30,7 +29,6 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(font_name: &str) -> Self {
-        // ↓↓↓ 核心修改：替代原来的 FontSystem::new() ↓↓↓
         let mut db = cosmic_text::fontdb::Database::new();
 
         // 1. 优先加载用户指定的字体
@@ -57,7 +55,6 @@ impl Renderer {
         }
 
         let mut font_system = FontSystem::new_with_locale_and_db("en".to_string(), db);
-        // ↑↑↑ 核心修改结束 ↑↑↑
 
         let metrics = Metrics::new(18.0, 27.0);
         let buffer = Buffer::new(&mut font_system, metrics);
@@ -65,7 +62,7 @@ impl Renderer {
             font_system,
             swash_cache: SwashCache::new(),
             buffer,
-            font_checked: true, // 这里改成 true，因为我们在 new 的时候已经确认过字体了
+            font_checked: true,
             last_text: String::new(),
             last_width: 0,
             last_height: 0,
@@ -76,7 +73,6 @@ impl Renderer {
         }
     }
 
-    /// 测量字体的实际行高（考虑中英文混合）
     /// 通过构造两行文本，计算 line_top 的差值来获得最精确的实际行高
     pub fn measure_line_height(&mut self, font_size: f32, font: &str) -> f32 {
         if self.cached_line_h > 0.0
@@ -238,7 +234,7 @@ impl Renderer {
             self.buffer.set_wrap(&mut self.font_system, Wrap::None);
             self.buffer.set_size(&mut self.font_system, width as f32, height as f32);
 
-            // 基础属性：始终包含通用无衬线字体作为保底
+            // 始终包含通用无衬线字体作为保底
             let mut attrs = Attrs::new().family(Family::SansSerif);
 
             // 如果用户指定了具体字体名称，则添加到最前面优先匹配
@@ -266,7 +262,7 @@ impl Renderer {
         let runs: Vec<_> = self.buffer.layout_runs().collect();
 
         let actual_rect_h = line_h.ceil() as i32;
-        // 【抗锯齿对齐优化】基于实际渲染矩形高度进行精确居中，消除小数截断导致的发虚
+        // 抗锯齿对齐优化基于实际渲染矩形高度进行精确居中，消除小数截断导致的发虚
         let text_y_offset = ((actual_rect_h as f32 - base_line_h) / 2.0).round() as i32;
 
 
@@ -319,7 +315,6 @@ impl Renderer {
                         .map(|s| s.chars().count())
                         .unwrap_or(0);
 
-                    // 此时 contains 底层已经是 HashSet 的 O(1) 查找
                     let is_highlight = line_info.highlights.contains(&char_idx);
 
                     let (r, g, b) = if line_info.is_selected && is_highlight {
@@ -400,7 +395,7 @@ impl Renderer {
                 }
             }
         }
-        // 硬件光标：在 prompt 行基于 cursor_pos 画竖线
+        // 在 prompt 行基于 cursor_pos 画竖线
         if state.preedit.is_empty() {
             if let Some(prompt_run) = runs.get(prompt_idx) {
                 let left_padding = (8.0 * scale).round() as i32;
@@ -450,7 +445,7 @@ impl Renderer {
             }
         }
 
-        None // 如果没有画光标，返回 None
+        None // 没有画光标，返回 None
     }
 }
 

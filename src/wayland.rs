@@ -88,8 +88,8 @@ pub struct App {
     pub fractional_scale_obj: Option<WpFractionalScaleV1>,
     pub pointer_y: f64,
     pub axis_accumulator: f64,
-    pub cursor_x: i32,  // 新增
-    pub cursor_y: i32,  // 新增
+    pub cursor_x: i32,
+    pub cursor_y: i32,
 }
 
 pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>, String)>> {
@@ -146,8 +146,8 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
         fractional_scale_obj: None,
         pointer_y: 0.0,
         axis_accumulator: 0.0,
-        cursor_x: 0,     // 新增
-        cursor_y: 0,     // 新增
+        cursor_x: 0,
+        cursor_y: 0,
     };
 
     let surface = app.compositor.create_surface(&qh, ());
@@ -227,19 +227,14 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
         }
 
         if app.state.need_redraw && app.configured {
-            // ↓↓↓ 新增：快路径检查开始 ↓↓↓
             let wayland_fd = conn.backend().poll_fd().as_raw_fd();
             let mut peek = [
                 libc::pollfd { fd: wayland_fd, events: libc::POLLIN, revents: 0 },
             ];
-            // 超时时间为 0 的非阻塞 poll，仅仅是为了看一眼还有没有事件
             unsafe { libc::poll(peek.as_mut_ptr(), 1, 0); }
 
             if peek[0].revents & libc::POLLIN != 0 {
-                // 队列里还有事件没处理完 → 跳过本次渲染，等下一轮循环
             } else {
-                // 队列空了 → 安心渲染
-                // ↓↓↓ 你原来的渲染逻辑全部放进这个 else 里 ↓↓↓
                 let w = app.width;
                 let h = app.height;
                 let scale = app.fractional_scale as f32 / 120.0;

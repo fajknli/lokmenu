@@ -1,6 +1,6 @@
 use pinyin::ToPinyinMulti;
 
-// 新增：拼音数据结构，包含全拼、首字母以及它们到原文索引的映射表
+// 拼音数据结构，包含全拼、首字母以及它们到原文索引的映射表
 #[derive(Clone, Debug, Default)]
 pub struct PinyinData {
     pub full: String,

@@ -1,5 +1,3 @@
-// src/keyboard.rs
-
 /// 将 Linux evdev 扫描码转换为 US 布局字符
 /// 返回 None 表示是不可打印的控制键
 pub fn get_char(key: u32, shift: bool) -> Option<char> {

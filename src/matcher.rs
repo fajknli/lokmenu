@@ -117,7 +117,7 @@ pub fn filter(
     results
 }
 
-// 纯净的 DP 核心算法，接收字符切片和可变缓冲区，彻底零分配
+// DP 核心算法，接收字符切片和可变缓冲区，零分配
 fn run_dp(
     t_chars: &[char],
     q_chars: &[char],
@@ -228,7 +228,7 @@ fn run_dp(
     Some((best_score, highlights))
 }
 
-// 终极零分配双向匹配
+// 零分配双向匹配
 fn fuzzy_match_bidirectional(text: &str, q_chars: &[char]) -> Option<(i32, HashSet<usize>)> {
     let mut best_score = i32::MIN;
     let mut best_hl = HashSet::new();
@@ -249,7 +249,7 @@ fn fuzzy_match_bidirectional(text: &str, q_chars: &[char]) -> Option<(i32, HashS
             best_hl.extend(idxs);
         }
 
-        // 2. 逆向匹配：直接在原地 reverse！零分配！
+        // 2. 逆向匹配：直接在原地 reverse 零分配
         tchars.reverse();
         qchars.reverse();
 
@@ -268,7 +268,7 @@ fn fuzzy_match_bidirectional(text: &str, q_chars: &[char]) -> Option<(i32, HashS
     if best_hl.is_empty() { None } else { Some((best_score, best_hl)) }
 }
 
-// 修改：使用双向匹配，并将拼音索引映射回原始字符索引
+// 使用双向匹配，并将拼音索引映射回原始字符索引
 fn match_pinyin_cached(data: &PinyinData, q_chars: &[char]) -> Option<(i32, HashSet<usize>)> {
     let mut best_score = i32::MIN;
     let mut highlights = HashSet::new();

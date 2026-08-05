@@ -1,7 +1,6 @@
 // src/state.rs
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use crate::config::Config;
 use crate::matcher;
 use std::collections::HashSet;
@@ -9,10 +8,12 @@ use std::collections::HashSet;
 pub struct State {
     pub items: Vec<String>,
     pub query: String,
-    pub pinyin_cache: Arc<RwLock<HashMap<usize, (String, String)>>>,
+    // 修改：去掉 Arc<RwLock>，直接使用 HashMap
+    pub pinyin_cache: HashMap<usize, crate::pinyin::PinyinData>,
     pub preedit: String,
     pub filtered_items: Vec<usize>,
-    pub highlights: Vec<Vec<usize>>,
+    // 修改：将 Vec<usize> 改为 HashSet<usize>，为渲染层 O(1) 查找做准备
+    pub highlights: Vec<HashSet<usize>>,
     pub selected_idx: usize,
     pub scroll_offset: usize,
     pub visible_lines: u32,
@@ -27,10 +28,19 @@ pub struct State {
 
 impl State {
     pub fn new(items: Vec<String>, config: &Config) -> Self {
+        // 修改：启动时预热拼音缓存，把第一次按键的卡顿平摊到启动阶段
+        let mut pinyin_cache = HashMap::with_capacity(items.len());
+        for (idx, item) in items.iter().enumerate() {
+            // 快速排斥：没中文的直接跳过，不占用内存
+            let has_cjk = item.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+            if has_cjk {
+                pinyin_cache.insert(idx, crate::pinyin::get_pinyin_pair(item));
+            }
+        }
 
         let mut state = Self {
             items,
-            pinyin_cache: Arc::new(RwLock::new(HashMap::new())),
+            pinyin_cache,
             query: String::new(),
             preedit: String::new(),
             filtered_items: Vec::new(),
@@ -54,9 +64,10 @@ impl State {
         if self.query.is_empty() {
             // 空查询：直接用原始索引，不需要跑 matcher
             self.filtered_items = (0..self.items.len()).collect();
-            self.highlights = vec![Vec::new(); self.items.len()];
+            self.highlights = vec![HashSet::new(); self.items.len()];
         } else {
             let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
+            // 修改：直接传 &self.pinyin_cache，不再有锁
             let results = matcher::filter(&items, &self.pinyin_cache, &self.query);
             self.filtered_items = results.iter().map(|r| r.original_idx).collect();
             self.highlights = results.iter().map(|r| r.highlight_indices.clone()).collect();

@@ -1,6 +1,7 @@
 // src/render.rs
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent, Wrap};
+use std::collections::HashSet;
 use crate::config::Config;
 use crate::state::State;
 
@@ -8,7 +9,8 @@ struct LineInfo {
     text: String,
     is_selected: bool,
     is_marked: bool,
-    highlights: Vec<usize>,
+    // 修改：改为 HashSet，使 contains 查找达到 O(1) 复杂度
+    highlights: HashSet<usize>,
     prefix_byte_len: usize,
 }
 
@@ -152,7 +154,7 @@ impl Renderer {
             text: format!("{}{}{}", config.prompt, display_query, state.preedit),
             is_selected: false,
             is_marked: false,
-            highlights: Vec::new(),
+            highlights: HashSet::new(),
             prefix_byte_len: config.prompt.len(),
         };
 
@@ -165,7 +167,7 @@ impl Renderer {
                     text: state.query.clone(),
                     is_selected: true,
                     is_marked: false,
-                    highlights: Vec::new(),
+                    highlights: HashSet::new(),
                     prefix_byte_len: 0,
                 });
             } else {
@@ -209,7 +211,7 @@ impl Renderer {
                     text: String::new(),
                     is_selected: false,
                     is_marked: false,
-                    highlights: Vec::new(),
+                    highlights: HashSet::new(),
                     prefix_byte_len: 0,
                 });
             }
@@ -315,6 +317,8 @@ impl Renderer {
                     let char_idx = line_info.text.get(..glyph.start)
                         .map(|s| s.chars().count())
                         .unwrap_or(0);
+
+                    // 此时 contains 底层已经是 HashSet 的 O(1) 查找
                     let is_highlight = line_info.highlights.contains(&char_idx);
 
                     let (r, g, b) = if line_info.is_selected && is_highlight {

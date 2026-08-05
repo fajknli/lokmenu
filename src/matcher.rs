@@ -1,15 +1,16 @@
 // src/matcher.rs
 
 use std::cell::RefCell;
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use crate::pinyin::PinyinData;
 
 const MAX_MATCHES: usize = 500;
 
 pub struct MatchResult {
     pub original_idx: usize,
     pub score: i32,
-    pub highlight_indices: Vec<usize>,
+    // 修改：改为 HashSet，用于合并首字母和全拼的匹配结果
+    pub highlight_indices: HashSet<usize>,
 }
 
 // 线程局部内存池：避免每次匹配时的 Vec 堆分配
@@ -48,10 +49,10 @@ fn quick_contains(text: &str, q_chars: &[char]) -> bool {
     false
 }
 
-// 修改函数签名，接收缓存池
+// 修改函数签名，接收无锁的 HashMap
 pub fn filter(
     items: &[&str],
-    pinyin_cache: &Arc<RwLock<HashMap<usize, (String, String)>>>,
+    pinyin_cache: &HashMap<usize, PinyinData>,
     query: &str
 ) -> Vec<MatchResult> {
     if query.is_empty() {
@@ -61,7 +62,7 @@ pub fn filter(
             .map(|(idx, _)| MatchResult {
                 original_idx: idx,
                 score: 0,
-                highlight_indices: Vec::new(),
+                highlight_indices: HashSet::new(),
             })
             .collect();
     }
@@ -72,40 +73,20 @@ pub fn filter(
     for (idx, item) in items.iter().enumerate() {
         // 优先级 1: 原文匹配
         if let Some(res) = fuzzy_match(item, &q_chars) {
+            let mut hl = HashSet::new();
+            hl.extend(res.1);
             results.push(MatchResult {
                 original_idx: idx,
-                score: res.0 + 50,
-                highlight_indices: res.1,
+                score: res.0 + 50, // 原文匹配给更高优先级
+                highlight_indices: hl,
             });
             continue;
         }
 
-        // 优先级 2: 拼音匹配 (懒加载)
-        // 1. 尝试从缓存读 (无论是真拼音还是空标记)
-        let cached = {
-            let cache_read = pinyin_cache.read().unwrap();
-            cache_read.get(&idx).cloned()
-        };
-
-        // 2. 如果没缓存，说明是第一次遇到这个词条
-        let pinyin = if let Some(p) = cached {
-            p
-        } else {
-            // 快速排斥：没中文的直接存入空标记，下次就不再遍历了
-            let has_cjk = item.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
-            let p = if has_cjk {
-                crate::pinyin::get_pinyin_pair(item)
-            } else {
-                (String::new(), String::new()) // 空标记
-            };
-            let mut cache_write = pinyin_cache.write().unwrap();
-            cache_write.insert(idx, p.clone());
-            p
-        };
-
-        // 3. 只有非空标记的（即真有中文拼音的）才去匹配
-        if !pinyin.1.is_empty() || !pinyin.0.is_empty() {
-            if let Some(res) = match_pinyin_cached(&pinyin.0, &pinyin.1, &q_chars) {
+        // 优先级 2: 拼音匹配
+        // 因为 state.rs 启动时已经预热了缓存，这里直接读
+        if let Some(pinyin_data) = pinyin_cache.get(&idx) {
+            if let Some(res) = match_pinyin_cached(pinyin_data, &q_chars) {
                 results.push(MatchResult {
                     original_idx: idx,
                     score: res.0,
@@ -115,7 +96,7 @@ pub fn filter(
         }
     }
 
-    // Top-K 截断：极速提取前 500 名 (原地截断，零额外内存分配)
+    // Top-K 截断：极速提取前 500 名
     if results.len() > MAX_MATCHES {
         results.select_nth_unstable_by(MAX_MATCHES - 1, |a, b| b.score.cmp(&a.score));
         results.truncate(MAX_MATCHES);
@@ -131,18 +112,14 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
     let qlen = q_chars.len();
     if qlen == 0 { return Some((0, Vec::new())); }
 
-    // 1. 快速排斥：如果连子序列都不是，直接跳过，避免分配任何 DP 内存
     if !quick_contains(text, q_chars) {
         return None;
     }
 
     FUZZY_BUF.with(|buf_cell| {
         let mut buf = buf_cell.borrow_mut();
-
-        // 解构借用，允许同时可变借用不同字段
         let FuzzyBuffers { tchars, dp_prev, dp_cur, par } = &mut *buf;
 
-        // 2. 复用内存池，仅清理和重置长度，不重新分配堆内存
         tchars.clear();
         tchars.extend(text.chars());
         let tlen = tchars.len();
@@ -170,7 +147,6 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
             }
         };
 
-        // 初始化 qi = 0
         for ti in 0..tlen {
             if tchars[ti].eq_ignore_ascii_case(&q_chars[0]) {
                 let mut s = 10i32;
@@ -180,7 +156,6 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
             }
         }
 
-        // 3. DP 递推求全局最优解
         for qi in 1..qlen {
             dp_cur.iter_mut().for_each(|x| *x = i32::MIN);
 
@@ -188,7 +163,6 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
             let mut best_nc_idx = usize::MAX;
 
             for ti in 0..tlen {
-                // 维护滑动窗口：max(dp[qi-1][0..ti-2])
                 if ti >= 2 && dp_prev[ti - 2] > i32::MIN {
                     if dp_prev[ti - 2] > best_nc {
                         best_nc = dp_prev[ti - 2];
@@ -203,13 +177,11 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
                 let mut best = i32::MIN;
                 let mut best_p = usize::MAX;
 
-                // 选择 1：从 ti-1 连续接过来
                 if ti >= 1 && dp_prev[ti - 1] > i32::MIN {
                     let s = dp_prev[ti - 1] + 20;
                     if s > best { best = s; best_p = ti - 1; }
                 }
 
-                // 选择 2：从更早的位置跳过来（有断点）
                 if best_nc > i32::MIN {
                     let s = best_nc - 10;
                     if s > best { best = s; best_p = best_nc_idx; }
@@ -225,12 +197,10 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
             std::mem::swap(dp_prev, dp_cur);
         }
 
-        // 找最优终点
         let last = qlen - 1;
         let mut best_score = i32::MIN;
         let mut best_end = usize::MAX;
         for ti in 0..tlen {
-            // 注意：因为上面 swap 了，所以最后一层的结果在 dp_prev 里
             if dp_prev[ti] > best_score {
                 best_score = dp_prev[ti];
                 best_end = ti;
@@ -238,7 +208,6 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
         }
         if best_end == usize::MAX { return None; }
 
-        // 回溯还原匹配位置
         let mut highlights = vec![best_end];
         let mut ti = best_end;
         for qi in (1..=last).rev() {
@@ -251,18 +220,46 @@ pub fn fuzzy_match(text: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
     })
 }
 
-fn match_pinyin_cached(full: &str, initials: &str, q_chars: &[char]) -> Option<(i32, Vec<usize>)> {
-    if !initials.is_empty() {
-        if let Some(res) = fuzzy_match(initials, q_chars) {
-            return Some((res.0, res.1));
+// 修改：使用映射表将拼音索引转换为原始字符索引，并合并首字母与全拼的匹配结果
+fn match_pinyin_cached(data: &PinyinData, q_chars: &[char]) -> Option<(i32, HashSet<usize>)> {
+    let mut best_score = i32::MIN;
+    let mut highlights = HashSet::new();
+
+    // 1. 尝试首字母匹配
+    if !data.init.is_empty() {
+        if let Some((score, idxs)) = fuzzy_match(&data.init, q_chars) {
+            if score > best_score { best_score = score; }
+            for i in idxs {
+                if i < data.init_map.len() {
+                    let orig = data.init_map[i];
+                    // 过滤掉隐形墙的占位符 usize::MAX
+                    if orig != usize::MAX {
+                        highlights.insert(orig);
+                    }
+                }
+            }
         }
     }
 
-    if !full.is_empty() {
-        if let Some(res) = fuzzy_match(full, q_chars) {
-            return Some((res.0, res.1));
+    // 2. 尝试全拼匹配
+    if !data.full.is_empty() {
+        if let Some((score, idxs)) = fuzzy_match(&data.full, q_chars) {
+            if score > best_score { best_score = score; }
+            for i in idxs {
+                if i < data.full_map.len() {
+                    let orig = data.full_map[i];
+                    if orig != usize::MAX {
+                        highlights.insert(orig);
+                    }
+                }
+            }
         }
     }
 
-    None
+    // 3. 如果有匹配结果，返回最高得分和并集高亮
+    if highlights.is_empty() {
+        None
+    } else {
+        Some((best_score, highlights))
+    }
 }

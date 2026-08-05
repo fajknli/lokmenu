@@ -5,13 +5,14 @@ wayland 菜单(配合脚本交互使用)
 
 需要支持 `wlr-layer-shell`、`text-input-v3` 的 Wayland 合成器，可选支持 `fractional-scale` / `viewporter`。
 
+## 依赖
+- Wayland 合成器 (如 Sway, Hyprland, Niri 等)
+- 字体 (通过 fontconfig 匹配)
+- wl-clipboard (可选，用于支持 Ctrl+V 粘贴)
+
 ## 安装
 
-```bash
-cargo install lokmenu
-
-git clone <this repo>
-```
+cargo install lokmenu# 或者从源码编译git clone <this repo>cd lokmenucargo build --release# 将 target/release/lokmenu 移动到你的 PATH 中
 
 ## 参数
 

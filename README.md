@@ -81,9 +81,12 @@ cargo build --release
 | `Ctrl+U` | 删除光标处至行首的内容 |
 | `Ctrl+K` | 删除光标处至行尾的内容 |
 | `Ctrl+W` | 向左删除一个单词 |
+| `Ctrl+Backspace` | 向左删除一个单词 |
 | `Ctrl+V` | 粘贴剪贴板内容 (调用 `wl-paste`) |
-| `Left` / `Ctrl+B` | 光标左移 |
-| `Right` / `Ctrl+F` | 光标右移 |
+| `Left` / `Ctrl+B` | 光标左移一个字符 |
+| `Right` / `Ctrl+F` | 光标右移一个字符 |
+| `Alt+B` | 光标左移一个单词 |
+| `Alt+F` | 光标右移一个单词 |
 | `Home` / `Ctrl+A` | 光标移至行首 |
 | `End` / `Ctrl+E` | 光标移至行尾 |
 

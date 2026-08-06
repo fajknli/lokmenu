@@ -273,6 +273,39 @@ impl State {
         self.need_redraw = true;
     }
 
+    // 向左跳过一个单词
+    pub fn move_word_left(&mut self) {
+        if self.cursor_pos == 0 { return; }
+        let chars: Vec<char> = self.query.chars().collect();
+
+        // 1. 如果光标左边是空格，先跳过所有空格
+        while self.cursor_pos > 0 && chars[self.cursor_pos - 1].is_whitespace() {
+            self.cursor_pos -= 1;
+        }
+        // 2. 跳过非空格字符（即单词本体）
+        while self.cursor_pos > 0 && !chars[self.cursor_pos - 1].is_whitespace() {
+            self.cursor_pos -= 1;
+        }
+        self.need_redraw = true;
+    }
+
+    // 向右跳过一个单词
+    pub fn move_word_right(&mut self) {
+        let len = self.query.chars().count();
+        if self.cursor_pos >= len { return; }
+        let chars: Vec<char> = self.query.chars().collect();
+
+        // 1. 如果光标当前位置是空格，先跳过所有空格
+        while self.cursor_pos < len && chars[self.cursor_pos].is_whitespace() {
+            self.cursor_pos += 1;
+        }
+        // 2. 跳过非空格字符（即单词本体）
+        while self.cursor_pos < len && !chars[self.cursor_pos].is_whitespace() {
+            self.cursor_pos += 1;
+        }
+        self.need_redraw = true;
+    }
+
     // --- 光标移动方法 ---
     pub fn cursor_left(&mut self) {
         if self.cursor_pos > 0 { self.cursor_pos -= 1; self.need_redraw = true; }

@@ -75,6 +75,7 @@ pub struct App {
     pub text_input: Option<ZwpTextInputV3>,
     pub shift_pressed: bool,
     pub ctrl_pressed: bool,
+    pub alt_pressed: bool,
     pub buffers: [Option<BufferSlot>; 2],
     pub configured: bool,
     pub width: i32,
@@ -133,6 +134,7 @@ pub fn run(items: Vec<String>, config: Config) -> io::Result<Option<(Vec<usize>,
         text_input: None,
         shift_pressed: false,
         ctrl_pressed: false,
+        alt_pressed: false,
         buffers: [None, None],
         configured: false,
         width: 0,
@@ -525,6 +527,7 @@ impl Dispatch<WlKeyboard, ()> for App {
             Event::Modifiers { mods_depressed, .. } => {
                 state.shift_pressed = (mods_depressed & 0x1) != 0;
                 state.ctrl_pressed = (mods_depressed & 0x4) != 0;
+                state.alt_pressed = (mods_depressed & 0x8) != 0;
             }
             Event::Key { state: key_state, key, .. } => {
                 if key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed) {
@@ -534,6 +537,7 @@ impl Dispatch<WlKeyboard, ()> for App {
                             46 => { state.state.cancel(); return; }          // Ctrl + C
                             22 => { state.state.delete_to_start(); return; } // Ctrl + U (删到行首)
                             17 => { state.state.delete_word_left(); return; }// Ctrl + W
+                            14 => { state.state.delete_word_left(); return; }// Ctrl + Backspace (同 Ctrl+W)
                             37 => { state.state.delete_to_end(); return; }   // Ctrl + K (删到行尾)
                             30 => { state.state.cursor_start(); return; }    // Ctrl + A
                             18 => { state.state.cursor_end(); return; }      // Ctrl + E
@@ -560,6 +564,13 @@ impl Dispatch<WlKeyboard, ()> for App {
                                 }
                                 return;
                             }
+                            _ => {}
+                        }
+                        return;
+                    } else if state.alt_pressed {
+                        match key {
+                            48 => { state.state.move_word_left(); return; }  // Alt + B
+                            33 => { state.state.move_word_right(); return; } // Alt + F
                             _ => {}
                         }
                         return;

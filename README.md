@@ -46,6 +46,7 @@ cargo build --release
 | `-m, --multi-select` | 启用多选模式 | 关闭 |
 | `-0, --null` | 多选结果以 NUL 分隔 | 关闭 |
 | `-P, --password` | 密码模式 (隐藏输入，不显示列表) | 关闭 |
+| `--no-history` | 禁用历史记录功能 (不读取/不写入缓存文件) | 关闭 |
 | `--anchor <POS>` | 窗口位置: `top`, `top-left`, `top-center`, `top-right`, `bottom`, `bottom-left`, `bottom-center`, `bottom-right` | `top` |
 | `-b, --bg <HEX>` | 背景颜色 | `#141522` |
 | `--fg <HEX>` | 普通文字颜色 | `#D4DCF2` |

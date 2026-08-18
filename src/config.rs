@@ -43,6 +43,7 @@ pub struct Config {
     pub null: bool,
     pub password: bool,
     pub anchor: WindowAnchor,
+    pub no_history: bool,
 }
 
 impl Default for Config {
@@ -67,6 +68,7 @@ impl Default for Config {
             null: false,
             password: false,
             anchor: WindowAnchor::Top,
+            no_history: false,
         }
     }
 }

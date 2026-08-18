@@ -24,6 +24,7 @@ pub struct State {
     pub selected_original_idx: Option<usize>,
     pub exit_code: Option<i32>,
     pub need_redraw: bool,
+    pub no_history: bool,
 }
 
 // 获取历史记录文件路径
@@ -49,12 +50,15 @@ impl State {
         }
 
         let mut history = HashMap::new();
-        if let Some(path) = get_history_path() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                for line in content.lines() {
-                    if let Some((count, name)) = line.split_once('\t') {
-                        if let Ok(c) = count.parse::<u32>() {
-                            history.insert(name.to_string(), c);
+        // Add this if statement to skip reading the file entirely
+        if !config.no_history {
+            if let Some(path) = get_history_path() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for line in content.lines() {
+                        if let Some((count, name)) = line.split_once('\t') {
+                            if let Ok(c) = count.parse::<u32>() {
+                                history.insert(name.to_string(), c);
+                            }
                         }
                     }
                 }
@@ -80,6 +84,7 @@ impl State {
             selected_original_idx: None,
             exit_code: None,
             need_redraw: true,
+            no_history: config.no_history,
         };
         state.update_filter();
         state
@@ -87,14 +92,19 @@ impl State {
 
     pub fn update_filter(&mut self) {
         if self.query.is_empty() {
-            let mut indexed_items: Vec<(usize, &String)> = self.items.iter().enumerate().collect();
-            indexed_items.sort_by(|a, b| {
-                let h_a = self.history.get(a.1).map_or(0, |&c| c);
-                let h_b = self.history.get(b.1).map_or(0, |&c| c);
-                // 先按频率降序，频率相同按字母升序，保证每次打开列表顺序稳定
-                h_b.cmp(&h_a).then_with(|| a.1.cmp(b.1))
-            });
-            self.filtered_items = indexed_items.iter().map(|(i, _)| *i).collect();
+            if self.no_history {
+                // 禁用历史：直接按原始标准输入顺序排列
+                self.filtered_items = (0..self.items.len()).collect();
+            } else {
+                let mut indexed_items: Vec<(usize, &String)> = self.items.iter().enumerate().collect();
+                indexed_items.sort_by(|a, b| {
+                    let h_a = self.history.get(a.1).map_or(0, |&c| c);
+                    let h_b = self.history.get(b.1).map_or(0, |&c| c);
+                    // 先按频率降序，频率相同按字母升序，保证每次打开列表顺序稳定
+                    h_b.cmp(&h_a).then_with(|| a.1.cmp(b.1))
+                });
+                self.filtered_items = indexed_items.iter().map(|(i, _)| *i).collect();
+            }
             self.highlights = vec![HashSet::new(); self.items.len()];
         } else {
             let items: Vec<&str> = self.items.iter().map(|s| s.as_str()).collect();
@@ -132,25 +142,25 @@ impl State {
             let item_text = &self.items[idx];
 
             // 更新历史记录
-            *self.history.entry(item_text.clone()).or_insert(0) += 1;
+            if !self.no_history {
+                *self.history.entry(item_text.clone()).or_insert(0) += 1;
 
-            // 准备写入文件的内容
-            if let Some(path) = get_history_path() {
-                // 清理膨胀：只保留使用次数最高的前 1000 条
-                let mut entries: Vec<(String, u32)> = self.history.iter().map(|(k, &v)| (k.clone(), v)).collect();
-                entries.sort_by(|a, b| b.1.cmp(&a.1)); // 按次数降序
-                entries.truncate(1000);
+                // 准备写入文件的内容
+                if let Some(path) = get_history_path() {
+                    let mut entries: Vec<(String, u32)> = self.history.iter().map(|(k, &v)| (k.clone(), v)).collect();
+                    entries.sort_by(|a, b| b.1.cmp(&a.1));
+                    entries.truncate(1000);
 
-                let content: String = entries.iter()
-                    .map(|(k, v)| format!("{}\t{}", v, k))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                    let content: String = entries.iter()
+                        .map(|(k, v)| format!("{}\t{}", v, k))
+                        .collect::<Vec<_>>()
+                        .join("\n");
 
-                // 异步写入硬盘，不阻塞主线程退出
-                std::thread::spawn(move || {
-                    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
-                    let _ = std::fs::write(&path, content);
-                });
+                    std::thread::spawn(move || {
+                        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+                        let _ = std::fs::write(&path, content);
+                    });
+                }
             }
 
             self.output = Some(item_text.clone());

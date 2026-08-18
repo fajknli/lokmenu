@@ -92,6 +92,10 @@ struct Cli {
     /// 提示符前缀背景颜色
     #[arg(long, default_value = "#1B1D2B")]
     prefix_bg: String,
+
+    /// 禁用历史记录功能 (不读取/不写入缓存文件)
+    #[arg(long = "no-history", default_value_t = false)]
+    no_history: bool,
 }
 
 fn parse_color(s: &str) -> u32 {
@@ -166,6 +170,7 @@ fn main() {
         null: cli.null,
         password: cli.password,
         anchor: cli.anchor,
+        no_history: cli.no_history,
     };
 
     match wayland::run(items, config) {
